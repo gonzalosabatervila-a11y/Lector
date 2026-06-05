@@ -1,0 +1,17 @@
+{
+  "name": "Lector — lectura de entrenamiento",
+  "short_name": "Lector",
+  "description": "Lector RSVP de entrenamiento cognitivo: encuentra tu techo real entre velocidad y comprensión.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08080a",
+  "theme_color": "#08080a",
+  "lang": "es",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

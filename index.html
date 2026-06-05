@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#08080a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Lector" />
+<link rel="manifest" href="./manifest.json" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<title>Lector</title>
+<style>
+  html, body, #root { height: 100%; margin: 0; background: #08080a; }
+  #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #08080a; color: #e8c84a; font-family: Georgia, serif; font-size: 22px; z-index: 9999; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body>
+<div id="boot">Lector…</div>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback } = React;
+// mammoth is global (window.mammoth) from CDN
+
+// Honest framing: dense text comprehension degrades above ~400-500 wpm (Rayner et al., 2016).
+// RSVP is most useful on small screens, for moderate gains (300-450), and for triage/scanning.
+const SAMPLE_TEXT = `La lectura RSVP presenta las palabras una a una en un punto fijo, eliminando el movimiento ocular y la regresión. Esto ayuda sobre todo en pantallas pequeñas, donde el barrido de línea es costoso. La evidencia es clara en un punto: la comprensión de texto denso cae por encima de unas cuatrocientas o quinientas palabras por minuto, porque el cuello de botella no es el ojo sino el procesamiento del lenguaje. Las cifras de mil palabras por minuto sin pérdida de comprensión que promete cierto marketing no se sostienen. Lo razonable es usar RSVP para ganancias moderadas, entre trescientas y cuatrocientas cincuenta, en lectura cuidadosa, y reservar las velocidades altas para triaje: decidir rápido si un texto merece una segunda lectura más lenta. La constancia del entrenamiento importa más que el número máximo alcanzado. Un texto técnico de Taleb o Kahneman no se escanea; se procesa. Este lector te da el control del ritmo para que encuentres tu propio techo honesto.`;
+
+const PIVOT_X = 0.32; // reference x as fraction of reading area width
+
+const PIVOT_COLORS = {
+  rojo:     { label: "Rojo",     value: "#e85a5a" },
+  ambar:    { label: "Ámbar",    value: "#e8943a" },
+  amarillo: { label: "Amarillo", value: "#e8c84a" },
+  verde:    { label: "Verde",    value: "#5fb86a" },
+};
+
+const MODES = {
+  comprension: { label: "Comprensión", wpm: 300, pauseScale: 1.0, color: "#5fb86a" },
+  ritmo:       { label: "Ritmo",       wpm: 400, pauseScale: 0.7, color: "#e8c84a" },
+  triaje:      { label: "Triaje",      wpm: 650, pauseScale: 0.3, color: "#e87a4a" },
+};
+
+const TRAINING_BLOCKS = [
+  { key: "warmup",    label: "Calentamiento", minutes: 3,  wpm: 250, pauseScale: 1.0, color: "#5fb86a" },
+  { key: "focus",     label: "Foco",          minutes: 10, wpm: 350, pauseScale: 0.9, color: "#e8c84a" },
+  { key: "triage",    label: "Triaje",        minutes: 5,  wpm: 600, pauseScale: 0.4, color: "#e87a4a" },
+  { key: "retention", label: "Retención",     minutes: 5,  wpm: 380, pauseScale: 1.0, color: "#7a9ee8" },
+];
+
+const AVG_WORD_LEN = 6; // chars; length beyond this adds processing time
+
+// ── Calibration: passage bank (original text) + speeds + analysis ─────────────
+const CALIB_SPEEDS = [250, 350, 450, 550, 600];
+const CALIB_PASSAGES = [
+  {
+    text: "El cuerpo humano regula su temperatura mediante un equilibrio constante entre el calor que produce y el que disipa. Cuando hace calor, los vasos sanguíneos de la piel se dilatan y aumenta el sudor, cuya evaporación enfría la superficie corporal. Cuando hace frío, los vasos se contraen para conservar el calor en los órganos internos y los músculos pueden temblar para generar calor adicional. El centro que coordina todo esto se encuentra en el hipotálamo, una región del cerebro que actúa como un termostato biológico comparando la temperatura real con un valor de referencia cercano a los treinta y siete grados.",
+    questions: [
+      { q: "¿Qué órgano coordina la regulación térmica?", opts: ["El corazón", "El hipotálamo", "La piel", "Los pulmones"], correct: 1 },
+      { q: "¿Qué ocurre con los vasos sanguíneos cuando hace calor?", opts: ["Se contraen", "Se dilatan", "Se endurecen", "No cambian"], correct: 1 },
+      { q: "¿Cuál es el valor de referencia mencionado?", opts: ["35 grados", "36 grados", "37 grados", "38 grados"], correct: 2 },
+    ],
+  },
+  {
+    text: "Los volcanes se forman donde el magma del interior terrestre encuentra una vía para ascender hasta la superficie. La mayoría se sitúa en los límites entre placas tectónicas, ya sea donde estas se separan o donde una se hunde bajo otra. La viscosidad del magma determina el tipo de erupción: un magma fluido permite que los gases escapen con facilidad y produce coladas tranquilas, mientras que un magma espeso atrapa los gases y puede generar explosiones violentas. La composición química de la roca fundida, y en especial su contenido en sílice, es el factor que más influye en esa viscosidad.",
+    questions: [
+      { q: "¿Dónde se sitúa la mayoría de los volcanes?", opts: ["En el centro de los continentes", "En los límites entre placas", "En el fondo de los lagos", "En zonas desérticas"], correct: 1 },
+      { q: "¿Qué tipo de magma produce explosiones violentas?", opts: ["El magma fluido", "El magma espeso", "El magma frío", "El magma salino"], correct: 1 },
+      { q: "¿Qué componente influye más en la viscosidad?", opts: ["El hierro", "El agua", "La sílice", "El azufre"], correct: 2 },
+    ],
+  },
+  {
+    text: "La memoria no funciona como una grabadora que almacena copias exactas de lo vivido. Cada vez que recordamos algo, el cerebro reconstruye el recuerdo a partir de fragmentos, y en ese proceso puede modificarlo sin que seamos conscientes. Por eso dos personas que presenciaron el mismo suceso pueden recordarlo de forma distinta, y por eso un recuerdo evocado muchas veces puede alejarse poco a poco de lo que realmente ocurrió. Esta plasticidad, que a veces produce errores, es también lo que permite que la memoria se actualice e integre información nueva con la antigua.",
+    questions: [
+      { q: "¿Cómo describe el texto el funcionamiento de la memoria?", opts: ["Como una grabadora exacta", "Como una reconstrucción", "Como un archivo permanente", "Como una fotografía"], correct: 1 },
+      { q: "¿Por qué dos testigos recuerdan distinto un suceso?", opts: ["Porque mienten", "Porque el cerebro reconstruye", "Porque no prestaron atención", "Porque olvidan rápido"], correct: 1 },
+      { q: "¿Qué ventaja tiene la plasticidad de la memoria?", opts: ["Hace recuerdos eternos", "Permite actualizar información", "Elimina los errores", "Acelera el pensamiento"], correct: 1 },
+    ],
+  },
+  {
+    text: "El interés compuesto es uno de los mecanismos más poderosos de las finanzas personales. A diferencia del interés simple, que se calcula siempre sobre el capital inicial, el compuesto se aplica también sobre los intereses ya acumulados. Esto significa que el crecimiento no es lineal sino exponencial: cuanto más tiempo permanece invertido el dinero, mayor es el efecto. Una consecuencia práctica es que empezar a ahorrar pronto, aunque sea con cantidades pequeñas, suele superar a empezar tarde con cantidades mayores. El tiempo, más que el importe, es la variable decisiva.",
+    questions: [
+      { q: "¿Sobre qué se calcula el interés compuesto?", opts: ["Solo el capital inicial", "El capital más los intereses acumulados", "Solo los intereses", "Una cantidad fija"], correct: 1 },
+      { q: "¿Cómo es el crecimiento del interés compuesto?", opts: ["Lineal", "Exponencial", "Constante", "Decreciente"], correct: 1 },
+      { q: "Según el texto, ¿cuál es la variable decisiva?", opts: ["El importe", "El tiempo", "El banco", "La inflación"], correct: 1 },
+    ],
+  },
+  {
+    text: "Las plantas obtienen la energía que necesitan mediante la fotosíntesis, un proceso que transforma la luz solar en energía química. En las hojas, un pigmento llamado clorofila captura la luz y la usa para combinar dióxido de carbono del aire con agua absorbida por las raíces. El resultado es glucosa, que sirve de alimento, y oxígeno, que se libera a la atmósfera como subproducto. Este intercambio convierte a las plantas en la base de casi todas las cadenas alimentarias y en una pieza esencial para mantener el equilibrio de gases del planeta.",
+    questions: [
+      { q: "¿Qué pigmento captura la luz?", opts: ["La glucosa", "La clorofila", "El oxígeno", "La savia"], correct: 1 },
+      { q: "¿Qué subproducto se libera a la atmósfera?", opts: ["Dióxido de carbono", "Nitrógeno", "Oxígeno", "Hidrógeno"], correct: 2 },
+      { q: "¿De dónde absorben el agua las plantas?", opts: ["De las hojas", "Del aire", "De las raíces", "De la luz"], correct: 2 },
+    ],
+  },
+];
+
+function analyzeCalibration(points) {
+  const p = [...points].sort((a, b) => a.wpm - b.wpm);
+  let optimal = null, basal = null, ceiling = null;
+  for (const pt of p) if (pt.comp >= 0.8) optimal = pt.wpm;
+  for (const pt of p) if (pt.comp >= 0.999) basal = pt.wpm;
+  for (let i = 0; i < p.length - 1; i++) {
+    const a = p[i], b = p[i + 1];
+    if (a.comp >= 0.7 && b.comp < 0.7) {
+      const t = (a.comp - 0.7) / (a.comp - b.comp);
+      ceiling = Math.round(a.wpm + t * (b.wpm - a.wpm));
+      break;
+    }
+  }
+  if (ceiling === null && p.every(x => x.comp >= 0.7)) ceiling = p[p.length - 1].wpm;
+  return { optimal: optimal || p[0].wpm, basal, ceiling };
+}
+
+// ── ORP ───────────────────────────────────────────────────────────────────────
+function getORP(word) {
+  const len = word.replace(/[^a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]/g, "").length;
+  if (len <= 1) return 0;
+  if (len <= 5) return 1;
+  if (len <= 9) return 2;
+  if (len <= 13) return 3;
+  return Math.floor(len * 0.25);
+}
+
+// Per-word delay: base × length term, then punctuation pause (scaled).
+function getDelay(word, wpm, pauseScale) {
+  const base = (60 / wpm) * 1000;
+  const len = word.replace(/[^a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]/g, "").length;
+  const lengthMult = 1 + Math.max(0, len - AVG_WORD_LEN) * 0.04;
+  const withLen = base * lengthMult;
+  let mult = 1;
+  if (/[.!?]["')\]]?$/.test(word)) mult = 1.8;
+  else if (/[,;:]["')\]]?$/.test(word)) mult = 1.35;
+  return Math.round(withLen * (1 + (mult - 1) * pauseScale));
+}
+
+// ── Pivot-anchored word: 3-cell grid, pivot fixed at PIVOT_X ──────────────────
+function WordDisplay({ word, fontSize, pivotColor }) {
+  if (!word) return null;
+  const orp = getORP(word);
+  const before = word.slice(0, orp);
+  const pivot = word.slice(orp, orp + 1);
+  const after = word.slice(orp + 1);
+  const leftFr = PIVOT_X, rightFr = 1 - PIVOT_X;
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `${leftFr}fr auto ${rightFr}fr`,
+      alignItems: "baseline", width: "100%",
+      fontFamily: "'Fraunces', 'DM Serif Display', Georgia, serif",
+      fontSize: `${fontSize}px`, letterSpacing: "-0.01em",
+      userSelect: "none", lineHeight: 1,
+    }}>
+      <span style={{ color: "#cfc8ba", textAlign: "right", whiteSpace: "nowrap", overflow: "visible" }}>{before}</span>
+      <span style={{ color: pivotColor, fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>{pivot}</span>
+      <span style={{ color: "#cfc8ba", textAlign: "left", whiteSpace: "nowrap", overflow: "visible" }}>{after}</span>
+    </div>
+  );
+}
+
+function parseText(text) {
+  return text.replace(/\n+/g, " ").split(/\s+/).map(w => w.trim()).filter(w => w.length > 0);
+}
+function stripHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return doc.body ? doc.body.innerText : html.replace(/<[^>]+>/g, " ");
+}
+// djb2 hash of content (stable position key, avoids filename collisions)
+function contentHash(text) {
+  let h = 5381;
+  const sample = text.slice(0, 4000);
+  for (let i = 0; i < sample.length; i++) h = ((h << 5) + h + sample.charCodeAt(i)) | 0;
+  return `${(h >>> 0).toString(36)}_${text.length.toString(36)}`;
+}
+
+// ── Native ZIP reader (no deps, browser DecompressionStream) ──────────────────
+async function readZip(arrayBuffer) {
+  const dv = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  const n = dv.byteLength;
+  let eocd = -1;
+  for (let i = n - 22; i >= 0 && i >= n - 22 - 65536; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("ZIP/EPUB corrupto: no se encontró el directorio central.");
+  const cdCount = dv.getUint16(eocd + 10, true);
+  const cdOffset = dv.getUint32(eocd + 16, true);
+  const entries = {};
+  let p = cdOffset;
+  for (let e = 0; e < cdCount; e++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true);
+    const compSize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    const localOff = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    entries[name] = { method, compSize, localOff };
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return { entries, bytes, dv };
+}
+async function zipReadText(zip, name) {
+  const ent = zip.entries[name];
+  if (!ent) return null;
+  const { dv, bytes } = zip;
+  const lp = ent.localOff;
+  if (dv.getUint32(lp, true) !== 0x04034b50) throw new Error("ZIP: cabecera local inválida.");
+  const nameLen = dv.getUint16(lp + 26, true);
+  const extraLen = dv.getUint16(lp + 28, true);
+  const dataStart = lp + 30 + nameLen + extraLen;
+  const comp = bytes.subarray(dataStart, dataStart + ent.compSize);
+  if (ent.method === 0) return new TextDecoder().decode(comp);
+  if (typeof DecompressionStream === "undefined") throw new Error("Tu navegador no soporta descompresión nativa.");
+  const ds = new DecompressionStream("deflate-raw");
+  const stream = new Blob([comp]).stream().pipeThrough(ds);
+  const buf = await new Response(stream).arrayBuffer();
+  return new TextDecoder().decode(buf);
+}
+
+// EPUB: preserve chapter boundaries → returns { text, chapters:[{title,startWord}] }
+async function parseEpub(arrayBuffer) {
+  const zip = await readZip(arrayBuffer);
+  const containerXml = await zipReadText(zip, "META-INF/container.xml");
+  if (!containerXml) throw new Error("EPUB: falta META-INF/container.xml.");
+  const containerDoc = new DOMParser().parseFromString(containerXml, "text/xml");
+  const rootfilePath = containerDoc.querySelector("rootfile")?.getAttribute("full-path");
+  if (!rootfilePath) throw new Error("EPUB: no se encontró el rootfile.");
+  const opfDir = rootfilePath.includes("/") ? rootfilePath.split("/").slice(0, -1).join("/") + "/" : "";
+  const opfXml = await zipReadText(zip, rootfilePath);
+  const opfDoc = new DOMParser().parseFromString(opfXml, "text/xml");
+  const manifest = {};
+  opfDoc.querySelectorAll("manifest item").forEach(item => { manifest[item.getAttribute("id")] = item.getAttribute("href"); });
+  const spineIds = Array.from(opfDoc.querySelectorAll("spine itemref")).map(ref => ref.getAttribute("idref"));
+  const allWords = [];
+  const chapters = [];
+  let ci = 0;
+  for (const id of spineIds) {
+    const href = manifest[id];
+    if (!href) continue;
+    const raw = await zipReadText(zip, opfDir + href) || await zipReadText(zip, href);
+    if (!raw) continue;
+    const txt = stripHtml(raw).trim();
+    const w = parseText(txt);
+    if (w.length < 3) continue; // skip cover/css/empty
+    chapters.push({ title: `Capítulo ${++ci}`, startWord: allWords.length });
+    for (const word of w) allWords.push(word);
+  }
+  return { text: allWords.join(" "), chapters };
+}
+async function parseDocx(arrayBuffer) {
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return { text: result.value, chapters: [] };
+}
+// PDF via pdf.js (UMD desde CDN, cargado bajo demanda con <script>)
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const s = document.createElement("script");
+    s.src = src; s.onload = () => resolve(); s.onerror = () => reject(new Error("No se pudo cargar " + src));
+    document.head.appendChild(s);
+  });
+}
+async function parsePdf(arrayBuffer) {
+  const VERSION = "3.11.174";
+  if (!window.pdfjsLib) {
+    await loadScript(`https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${VERSION}/pdf.min.js`);
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${VERSION}/pdf.worker.min.js`;
+  }
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    let pageText = "";
+    for (const item of content.items) {
+      pageText += item.str;
+      if (item.hasEOL) pageText += "\n";
+      else if (item.str && !/\s$/.test(item.str)) pageText += " ";
+    }
+    pages.push(pageText);
+  }
+  return { text: pages.join("\n"), chapters: [] };
+}
+
+// ── Storage: localStorage → window.storage → memory ───────────────────────────
+const storageBackend = (() => {
+  try {
+    const k = "__sr_test__";
+    localStorage.setItem(k, "1"); localStorage.removeItem(k);
+    return {
+      get: async (key) => { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; },
+      set: async (key, val) => { localStorage.setItem(key, JSON.stringify(val)); },
+    };
+  } catch {}
+  if (typeof window !== "undefined" && window.storage) {
+    return {
+      get: async (key) => { try { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : null; } catch { return null; } },
+      set: async (key, val) => { try { await window.storage.set(key, JSON.stringify(val)); } catch {} },
+    };
+  }
+  const mem = {};
+  return { get: async (k) => mem[k] ?? null, set: async (k, v) => { mem[k] = v; } };
+})();
+const storageGet = (k) => storageBackend.get(k);
+const storageSet = (k, v) => storageBackend.set(k, v);
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const SESSION_GAP = 120000;
+const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Mejora 3: haptics (degradación silenciosa donde no haya soporte, p.ej. iOS Safari)
+const haptic = (pattern) => { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {} };
+
+function SpeedReader() {
+  const [words, setWords]       = useState(parseText(SAMPLE_TEXT));
+  const [chapters, setChapters] = useState([]);
+  const [index, setIndex]       = useState(0);
+  const [playing, setPlaying]   = useState(false);
+  const [wpm, setWpm]           = useState(350);
+  const [fontSize, setFontSize] = useState(48);
+  const [pivotColor, setPivotColor] = useState("ambar");
+  const [mode, setMode]         = useState(null);
+  const [pauseScale, setPauseScale] = useState(0.9);
+  const [inputText, setInputText] = useState("");
+  const [panel, setPanel]       = useState(null); // 'input' | 'stats' | 'history' | null
+  const [fileName, setFileName] = useState("Texto de muestra");
+  const [docKey, setDocKey]     = useState(contentHash(SAMPLE_TEXT));
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState("");
+  const [scrubbing, setScrubbing] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [mounted, setMounted]   = useState(false);
+  const [checksOn, setChecksOn] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
+  const [calibration, setCalibration] = useState(null);
+  const [calibrations, setCalibrations] = useState([]);
+  const [sessionLog, setSessionLog] = useState([]);
+  const [docsMap, setDocsMap] = useState({});
+  const [showChapters, setShowChapters] = useState(false);
+
+  const [metrics, setMetrics]   = useState({ totalWordsRead: 0, totalMs: 0, sessions: 0, lastDay: null, streak: 0, todayWords: 0, todayDay: null, lastActivity: 0 });
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
+  // accumulators written every tick (cheap), flushed to state/storage on pause/finish/unload
+  const accRef = useRef({ words: 0, ms: 0 });
+
+  const [training, setTraining] = useState(null);
+  const [blockRemaining, setBlockRemaining] = useState(0);
+  const trainingElapsedRef = useRef(0);
+
+  const [sessionStart, setSessionStart] = useState(null);
+  const sessionWordsRef = useRef(0);
+  const sessionMsRef = useRef(0);
+  const [summary, setSummary] = useState(null);
+  const [summaryText, setSummaryText] = useState("");
+  const [summaryRetention, setSummaryRetention] = useState(0);
+  const [history, setHistory] = useState([]);
+
+  // periodic comprehension check
+  const [check, setCheck] = useState(null); // {answer} prompt
+  const [checkText, setCheckText] = useState("");
+  const lastCheckRef = useRef(0);
+
+  const trackRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const indexRef = useRef(index);
+  const playingRef = useRef(false);
+  const stateRef = useRef({ wpm, pauseScale });
+  const timeoutRef = useRef(null);
+  indexRef.current = index;
+  stateRef.current = { wpm, pauseScale };
+
+  const currentWord = words[index];
+  const progress  = words.length > 0 ? (index / words.length) * 100 : 0;
+  const remaining = words.length > 0 ? Math.ceil((words.length - index) / wpm) : 0;
+  const cadence = metrics.totalMs > 0 ? Math.round(metrics.totalWordsRead / (metrics.totalMs / 60000)) : 0;
+  const reduce = prefersReducedMotion;
+
+  useEffect(() => { const t = setTimeout(() => setMounted(true), 30); return () => clearTimeout(t); }, []);
+
+  // ── Hydrate ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      const prefs = await storageGet("sr:prefs");
+      if (prefs) {
+        if (prefs.wpm) setWpm(prefs.wpm);
+        if (prefs.fontSize) setFontSize(prefs.fontSize);
+        if (prefs.pivotColor && PIVOT_COLORS[prefs.pivotColor]) setPivotColor(prefs.pivotColor);
+        if (prefs.mode !== undefined) setMode(prefs.mode);
+        if (prefs.pauseScale !== undefined) setPauseScale(prefs.pauseScale);
+        if (prefs.checksOn !== undefined) setChecksOn(prefs.checksOn);
+      }
+      const m = await storageGet("sr:metrics");
+      if (m) setMetrics(prev => ({ ...prev, ...m }));
+      const h = await storageGet("sr:summaries");
+      if (h) setHistory(h);
+      const cal = await storageGet("sr:calibration");
+      const calArr = await storageGet("sr:calibrations");
+      if (calArr && calArr.length) { setCalibrations(calArr); setCalibration(calArr[0]); }
+      else if (cal) { setCalibrations([cal]); setCalibration(cal); } // migrate old single record
+      const sess = await storageGet("sr:sessions");
+      if (sess) setSessionLog(sess);
+      const docs = await storageGet("sr:docs");
+      if (docs) setDocsMap(docs);
+      setHydrated(true);
+    })();
+  }, []);
+
+  useEffect(() => { if (hydrated) storageSet("sr:prefs", { wpm, fontSize, pivotColor, mode, pauseScale, checksOn }); }, [wpm, fontSize, pivotColor, mode, pauseScale, checksOn, hydrated]);
+  useEffect(() => {
+    if (!hydrated || !docKey) return;
+    const t = setTimeout(() => {
+      storageSet("sr:pos:" + docKey, index);
+      // track max progress per document (for "completados")
+      const pct = words.length ? (index / words.length) * 100 : 0;
+      setDocsMap(prev => {
+        const cur = prev[docKey];
+        if (cur && cur.maxPct >= pct && cur.name === fileName) return prev;
+        const next = { ...prev, [docKey]: { name: fileName, maxPct: Math.max(pct, cur?.maxPct || 0), lastTs: Date.now() } };
+        storageSet("sr:docs", next);
+        return next;
+      });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [index, docKey, hydrated, words.length, fileName]);
+
+  // Flush accumulated metrics to state + storage (called on pause/finish/unload)
+  const flushMetrics = useCallback(() => {
+    const acc = accRef.current;
+    if (acc.words === 0) return;
+    accRef.current = { words: 0, ms: 0 };
+    setMetrics(prev => {
+      const day = todayStr();
+      const newDay = prev.todayDay !== day;
+      const next = {
+        ...prev,
+        totalWordsRead: prev.totalWordsRead + acc.words,
+        totalMs: prev.totalMs + acc.ms,
+        todayWords: (newDay ? 0 : prev.todayWords) + acc.words,
+        todayDay: day,
+        lastActivity: Date.now(),
+      };
+      storageSet("sr:metrics", next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onUnload = () => { flushMetrics(); };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [flushMetrics]);
+
+  // Mejora 4: pausa automática al pasar la app a segundo plano
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "hidden" && playingRef.current) { setPlaying(false); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  // ── Engine (preserved: recursive setTimeout w/ refs) ───────────────────────
+  const stop = useCallback(() => {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+  }, []);
+
+  const finishSession = useCallback(() => {
+    flushMetrics();
+    const ms = sessionMsRef.current, w = sessionWordsRef.current;
+    if (w < 5) { setSessionStart(null); return; }
+    const realWpm = ms > 0 ? Math.round(w / (ms / 60000)) : 0;
+    // Always log session (complete data for monthly/daily aggregation, even without a written note)
+    (async () => {
+      const log = (await storageGet("sr:sessions")) || [];
+      log.unshift({ ts: Date.now(), words: w, ms, wpm: realWpm });
+      const trimmed = log.slice(0, 500);
+      await storageSet("sr:sessions", trimmed); setSessionLog(trimmed);
+    })();
+    setSummary({ words: w, ms, wpm: realWpm });
+    setSummaryText(""); setSummaryRetention(0);
+    setSessionStart(null);
+    haptic(80);
+  }, [flushMetrics]);
+
+  const tick = useCallback(() => {
+    const { wpm: w, pauseScale: ps } = stateRef.current;
+    const i = indexRef.current;
+    const word = words[i] || "";
+    const delay = getDelay(word, w, ps);
+    timeoutRef.current = setTimeout(() => {
+      const next = indexRef.current + 1;
+      // cheap accumulation only (no setState/storage per tick)
+      accRef.current.words += 1;
+      accRef.current.ms += delay;
+      sessionWordsRef.current += 1;
+      sessionMsRef.current += delay;
+      // periodic comprehension check
+      if (checksOn && playingRef.current) {
+        const sinceCheck = sessionMsRef.current - lastCheckRef.current;
+        if (sinceCheck > 180000) { // every ~3 min of reading
+          lastCheckRef.current = sessionMsRef.current;
+          setPlaying(false);
+          setCheck({ atWpm: w }); setCheckText("");
+          return;
+        }
+      }
+      if (next >= words.length) { setPlaying(false); finishSession(); return; }
+      setIndex(next);
+      if (playingRef.current) tick();
+    }, delay);
+  }, [words, checksOn, finishSession]);
+
+  useEffect(() => {
+    playingRef.current = playing;
+    if (playing) {
+      setMetrics(prev => {
+        const now = Date.now(); const day = todayStr();
+        let { sessions, streak, lastDay } = prev;
+        if (now - (prev.lastActivity || 0) > SESSION_GAP) {
+          sessions += 1;
+          if (lastDay !== day) {
+            const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+            streak = lastDay === yesterday ? streak + 1 : 1; lastDay = day;
+          }
+        }
+        return { ...prev, sessions, streak, lastDay, lastActivity: now };
+      });
+      if (!sessionStart) { setSessionStart(Date.now()); sessionWordsRef.current = 0; sessionMsRef.current = 0; lastCheckRef.current = 0; }
+      stop(); tick();
+    } else {
+      stop(); flushMetrics();
+    }
+    return stop;
+  }, [playing]); // eslint-disable-line
+
+  useEffect(() => { if (playingRef.current) { stop(); tick(); } }, [wpm, pauseScale, tick, stop]);
+
+  // ── Training timer (advances only while playing) ────────────────────────────
+  useEffect(() => {
+    if (!training || !playing) return;
+    const block = TRAINING_BLOCKS[training.blockIdx];
+    const blockMs = block.minutes * 60000;
+    let last = Date.now();
+    const id = setInterval(() => {
+      const now = Date.now();
+      trainingElapsedRef.current += now - last; last = now;
+      const rem = blockMs - trainingElapsedRef.current;
+      if (rem <= 0) {
+        const nextIdx = training.blockIdx + 1;
+        trainingElapsedRef.current = 0;
+        if (nextIdx >= TRAINING_BLOCKS.length) { setPlaying(false); setTraining(null); finishSession(); }
+        else {
+          const nb = TRAINING_BLOCKS[nextIdx];
+          setWpm(nb.wpm); setPauseScale(nb.pauseScale); setMode(null);
+          setTraining({ blockIdx: nextIdx }); setBlockRemaining(nb.minutes * 60000); haptic([40, 60, 40]);
+        }
+      } else setBlockRemaining(rem);
+    }, 250);
+    return () => clearInterval(id);
+  }, [training, playing]); // eslint-disable-line
+
+  const startTraining = () => {
+    const b = TRAINING_BLOCKS[0];
+    setWpm(b.wpm); setPauseScale(b.pauseScale); setMode(null);
+    sessionWordsRef.current = 0; sessionMsRef.current = 0; lastCheckRef.current = 0; setSessionStart(Date.now());
+    trainingElapsedRef.current = 0;
+    setTraining({ blockIdx: 0 }); setBlockRemaining(b.minutes * 60000); setPlaying(true);
+  };
+  const stopTraining = () => { setTraining(null); setPlaying(false); trainingElapsedRef.current = 0; };
+
+  const closeSummary = async () => {
+    if (summaryText.trim() || summaryRetention > 0) {
+      const log = (await storageGet("sr:summaries")) || [];
+      log.unshift({ ts: Date.now(), doc: fileName, words: summary.words, ms: summary.ms, wpm: summary.wpm, note: summaryText.trim(), retention: summaryRetention });
+      const trimmed = log.slice(0, 100);
+      await storageSet("sr:summaries", trimmed); setHistory(trimmed);
+    }
+    setSummary(null);
+  };
+
+  // Mejora 2: exportar sesión a Markdown (descarga; en iOS se guarda en Archivos / abre en Obsidian)
+  const exportMarkdown = (rec) => {
+    const fmt = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
+    const date = new Date(rec.ts || Date.now());
+    const md = `# Lectura — ${rec.doc}\n\n` +
+      `- **Fecha:** ${date.toLocaleDateString("es-ES")} ${date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}\n` +
+      `- **Palabras leídas:** ${rec.words}\n` +
+      `- **Cadencia efectiva:** ${rec.wpm} wpm\n` +
+      `- **Tiempo:** ${fmt(rec.ms)}\n` +
+      (rec.retention ? `- **Retención (subjetiva):** ${rec.retention}/5\n` : "") +
+      (rec.note ? `\n## Resumen\n\n> ${rec.note}\n` : "") +
+      `\n---\n*Exportado desde Lector*\n`;
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safe = (rec.doc || "sesion").replace(/[^\w\sáéíóúñü-]/gi, "").slice(0, 40).trim().replace(/\s+/g, "_");
+    a.href = url; a.download = `lectura_${safe}_${date.toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const submitCheck = async () => {
+    if (checkText.trim()) {
+      const log = (await storageGet("sr:checks")) || [];
+      log.unshift({ ts: Date.now(), doc: fileName, atWpm: check.atWpm, answer: checkText.trim() });
+      await storageSet("sr:checks", log.slice(0, 100));
+    }
+    setCheck(null); setPlaying(true);
+  };
+
+  const saveCalibration = async (results) => {
+    const analysis = analyzeCalibration(results);
+    const record = { ts: Date.now(), points: results, ...analysis };
+    const arr = [record, ...calibrations].slice(0, 20);
+    setCalibration(record); setCalibrations(arr);
+    await storageSet("sr:calibrations", arr);
+  };
+
+  // ── Controls ────────────────────────────────────────────────────────────────
+  const handlePlayPause = useCallback(() => {
+    if (indexRef.current >= words.length - 1) { setIndex(0); setPlaying(true); }
+    else setPlaying(p => !p);
+  }, [words.length]);
+  const handleBack    = useCallback(() => { setPlaying(false); setIndex(i => Math.max(0, i - 10)); }, []);
+  const handleForward = useCallback(() => { setPlaying(false); setIndex(i => Math.min(words.length - 1, i + 10)); }, [words.length]);
+  const handleRestart = useCallback(() => { setPlaying(false); setIndex(0); }, []);
+  const adjustWpm = (d) => { setWpm(w => Math.max(50, Math.min(2000, w + d))); setMode(null); };
+  const applyMode = (key) => { const m = MODES[key]; setMode(key); setWpm(m.wpm); setPauseScale(m.pauseScale); setPlaying(false); };
+  const gotoChapter = (startWord) => { setPlaying(false); setIndex(startWord); };
+  const currentChapterIdx = chapters.length ? chapters.reduce((acc, ch, i) => (index >= ch.startWord ? i : acc), 0) : -1;
+  const prevChapter = () => { if (currentChapterIdx > 0) gotoChapter(chapters[currentChapterIdx - 1].startWord); };
+  const nextChapter = () => { if (currentChapterIdx >= 0 && currentChapterIdx < chapters.length - 1) gotoChapter(chapters[currentChapterIdx + 1].startWord); };
+
+  // scrubbing
+  const idxFromClientX = useCallback((clientX) => {
+    const el = trackRef.current; if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return Math.round(ratio * (words.length - 1));
+  }, [words.length]);
+  const handleScrubStart = (e) => { setScrubbing(true); setPlaying(false); setIndex(idxFromClientX(e.clientX)); try { e.currentTarget.setPointerCapture(e.pointerId); } catch {} };
+  const handleScrubMove = (e) => { if (scrubbing) setIndex(idxFromClientX(e.clientX)); };
+  const handleScrubEnd = () => setScrubbing(false);
+
+  // keyboard + escape
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") { setPanel(null); setSummary(null); setCheck(null); setShowChapters(false); return; }
+      if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
+      if (e.code === "Space") { e.preventDefault(); handlePlayPause(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); handleBack(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); handleForward(); }
+      else if (e.key === "r" || e.key === "R") handleRestart();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handlePlayPause, handleBack, handleForward, handleRestart]);
+
+  // ── Loading ───────────────────────────────────────────────────────────────
+  const loadDoc = async (text, name, chaps = []) => {
+    const parsed = parseText(text);
+    if (parsed.length === 0) throw new Error("No se pudo extraer texto.");
+    const key = contentHash(text);
+    setWords(parsed); setChapters(chaps); setPlaying(false); setPanel(null); setError(""); setFileName(name); setDocKey(key);
+    const savedPos = await storageGet("sr:pos:" + key);
+    setIndex(savedPos && savedPos < parsed.length ? savedPos : 0);
+    // Mejora 1: guardar el texto para reabrir desde la biblioteca sin re-subir (límite ~1.5 MB)
+    if (text.length < 1500000) {
+      try { await storageSet("sr:doctext:" + key, { text, name, chapters: chaps }); } catch {}
+    }
+  };
+  const openFromLibrary = async (key) => {
+    const stored = await storageGet("sr:doctext:" + key);
+    if (stored) await loadDoc(stored.text, stored.name, stored.chapters || []);
+    setPanel(null);
+  };
+  const handleLoadText = () => { if (inputText.trim()) loadDoc(inputText, "Texto personalizado").catch(e => setError(e.message)); };
+  const handleFile = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setLoading(true); setError(""); setPlaying(false); setFileName(file.name);
+    try {
+      const ext = file.name.split(".").pop().toLowerCase();
+      let res;
+      if (ext === "txt" || ext === "md") res = { text: await file.text(), chapters: [] };
+      else if (ext === "docx") res = await parseDocx(await file.arrayBuffer());
+      else if (ext === "epub") res = await parseEpub(await file.arrayBuffer());
+      else if (ext === "pdf") res = await parsePdf(await file.arrayBuffer());
+      else res = { text: await file.text(), chapters: [] };
+      await loadDoc(res.text, file.name, res.chapters);
+    } catch (err) { setError(`Error al leer el archivo: ${err.message}`); }
+    finally { setLoading(false); e.target.value = ""; }
+  };
+
+  const wpmOptions = [150, 200, 250, 300, 350, 400, 450, 500, 550, 600];
+  const fmtTime = (ms) => { const m = Math.floor(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`; };
+  const fmtClock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  const fmtMs = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
+  const fmtDate = (ts) => new Date(ts).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+
+  const curBlock = training ? TRAINING_BLOCKS[training.blockIdx] : null;
+  const pc = PIVOT_COLORS[pivotColor].value;
+  const anim = (name) => reduce ? "" : name;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#08080a", color: "#f0ebe0", fontFamily: "'Space Grotesk', system-ui, -apple-system, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden", WebkitTextSizeAdjust: "100%", touchAction: "manipulation", position: "relative" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        html, body { overscroll-behavior: none; }
+        ::-webkit-scrollbar { width: 0; height: 0; }
+        input[type=range] { -webkit-appearance:none; appearance:none; background:transparent; cursor:pointer; height:30px; }
+        input[type=range]::-webkit-slider-track { background:#26241f; height:3px; border-radius:2px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; background:#e8c84a; width:22px; height:22px; border-radius:50%; margin-top:-10px; box-shadow:0 0 0 4px #e8c84a18; }
+        .mono { font-family:'JetBrains Mono', ui-monospace, monospace; }
+        .pill { transition: all 0.18s ease; flex-shrink:0; }
+        .pill.active { background:#e8c84a1f !important; color:#e8c84a !important; border-color:#e8c84a !important; }
+        .ctrl-btn { transition: transform 0.1s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease; -webkit-user-select:none; user-select:none; }
+        .ctrl-btn:active { transform:scale(0.92); }
+        .wpm-scroll { display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; padding:2px; }
+        .wpm-scroll::-webkit-scrollbar { display:none; }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes wordPop { from { opacity:0.5; } to { opacity:1; } }
+        @keyframes pulseGlow { 0%,100% { box-shadow:0 0 0 0 #e8c84a22; } 50% { box-shadow:0 0 0 10px #e8c84a00; } }
+        .reveal { animation: fadeUp 0.5s ease both; }
+        .word-pop { animation: wordPop 0.09s ease; }
+        .play-idle { animation: pulseGlow 2.4s ease-in-out infinite; }
+        .panel { background:#0e0e10; }
+        @media (prefers-reduced-motion: reduce) {
+          .reveal, .word-pop, .play-idle { animation: none !important; }
+          * { transition: none !important; }
+        }
+      `}</style>
+
+      <div style={{ position:"absolute", inset:0, pointerEvents:"none", background:"radial-gradient(ellipse 80% 55% at 50% 42%, transparent 40%, #00000055 100%)", zIndex:1 }} />
+
+      {/* ── SUMMARY OVERLAY ── */}
+      {summary && (
+        <div style={{ position:"absolute", inset:0, zIndex:50, background:"#08080aee", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px" }}>
+          <div className={anim("reveal")} style={{ width:"100%", maxWidth:460, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"28px 24px", display:"flex", flexDirection:"column", gap:18, maxHeight:"90vh", overflowY:"auto" }}>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:26, color:"#e8c84a" }}>Sesión completada</div>
+              <div style={{ fontSize:12, color:"#6a665e", marginTop:4 }}>{fileName}</div>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-around", gap:12, padding:"16px 0", borderTop:"1px solid #1a1814", borderBottom:"1px solid #1a1814" }}>
+              {[{ v: summary.words.toLocaleString(), l: "palabras" }, { v: summary.wpm, l: "cadencia ef." }, { v: fmtMs(summary.ms), l: "tiempo" }].map((s, i) => (
+                <div key={i} style={{ textAlign:"center" }}>
+                  <div className="mono" style={{ fontSize:24, fontWeight:500, color:"#f0ebe0", lineHeight:1 }}>{s.v}</div>
+                  <div style={{ fontSize:10, color:"#6a665e", letterSpacing:"0.08em", textTransform:"uppercase", marginTop:6 }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize:13, color:"#a8a298", marginBottom:10 }}>¿Cuánto crees que retuviste?</div>
+              <div style={{ display:"flex", gap:8 }}>
+                {[1,2,3,4,5].map(n => (
+                  <button key={n} className="ctrl-btn" onClick={() => setSummaryRetention(n)}
+                    style={{ flex:1, height:44, borderRadius:10, cursor:"pointer", background: summaryRetention>=n ? "#e8c84a1f" : "transparent", border:`1px solid ${summaryRetention>=n ? "#e8c84a" : "#26241f"}`, color: summaryRetention>=n ? "#e8c84a" : "#55514a", fontSize:15, fontWeight:600 }}>{n}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize:13, color:"#a8a298", marginBottom:8 }}>Resume en una frase lo que leíste:</div>
+              <textarea value={summaryText} onChange={e => setSummaryText(e.target.value)} placeholder="La idea principal era…"
+                style={{ width:"100%", background:"#08080a", border:"1px solid #26241f", color:"#e8e3d8", borderRadius:12, padding:"12px 14px", fontSize:15, resize:"vertical", minHeight:72, fontFamily:"inherit" }} />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => exportMarkdown({ ...summary, ts: Date.now(), doc: fileName, note: summaryText.trim(), retention: summaryRetention })}
+                style={{ flex:1, background:"transparent", border:"1px solid #33302a", color:"#9a948a", borderRadius:12, padding:"14px", fontSize:14, cursor:"pointer" }}>Exportar .md</button>
+              <button onClick={closeSummary} style={{ flex:2, background:"#e8c84a", color:"#08080a", border:"none", borderRadius:12, padding:"14px", fontSize:15, fontWeight:600, cursor:"pointer" }}>{(summaryText.trim()||summaryRetention) ? "Guardar y cerrar" : "Cerrar"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── COMPREHENSION CHECK OVERLAY ── */}
+      {check && (
+        <div style={{ position:"absolute", inset:0, zIndex:50, background:"#08080aee", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px" }}>
+          <div className={anim("reveal")} style={{ width:"100%", maxWidth:420, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"26px 22px", display:"flex", flexDirection:"column", gap:16 }}>
+            <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:"#e8c84a" }}>Pausa de comprensión</div>
+            <div style={{ fontSize:14, color:"#a8a298" }}>¿De qué iba el último párrafo? Escríbelo de memoria, sin volver atrás.</div>
+            <textarea value={checkText} onChange={e => setCheckText(e.target.value)} placeholder="Trataba sobre…"
+              style={{ width:"100%", background:"#08080a", border:"1px solid #26241f", color:"#e8e3d8", borderRadius:12, padding:"12px 14px", fontSize:15, resize:"vertical", minHeight:80, fontFamily:"inherit" }} />
+            <button onClick={submitCheck} style={{ background:"#e8c84a", color:"#08080a", border:"none", borderRadius:12, padding:"13px", fontSize:15, fontWeight:600, cursor:"pointer" }}>Continuar</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── CHAPTER LIST OVERLAY ── */}
+      {showChapters && chapters.length > 1 && (
+        <div onClick={() => setShowChapters(false)} style={{ position:"absolute", inset:0, zIndex:55, background:"#08080aee", backdropFilter:"blur(8px)", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"24px" }}>
+          <div onClick={e => e.stopPropagation()} className={anim("reveal")} style={{ width:"100%", maxWidth:420, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"20px", display:"flex", flexDirection:"column", gap:14, marginTop:"4vh", marginBottom:"4vh", maxHeight:"88vh" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:"#e8c84a" }}>Capítulos</div>
+              <button onClick={() => setShowChapters(false)} style={{ background:"transparent", border:"none", color:"#9a948a", cursor:"pointer", fontSize:26, lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6, overflowY:"auto" }}>
+              {chapters.map((ch, i) => {
+                const active = i === currentChapterIdx;
+                const pct = words.length ? Math.round((ch.startWord / words.length) * 100) : 0;
+                return (
+                  <button key={i} className="ctrl-btn" onClick={() => { gotoChapter(ch.startWord); setShowChapters(false); }}
+                    style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, background:active?"#e8c84a1f":"#0a0a0c", border:`1px solid ${active?"#e8c84a":"#1a1814"}`, color:active?"#e8c84a":"#a8a298", borderRadius:10, padding:"12px 14px", cursor:"pointer", fontSize:14, fontFamily:"inherit", textAlign:"left" }}>
+                    <span>Capítulo {i + 1}</span>
+                    <span className="mono" style={{ fontSize:11, color:active?"#e8c84a":"#55514a" }}>{pct}%</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LIBRARY OVERLAY ── */}
+      {panel === "library" && (
+        <div onClick={() => setPanel(null)} style={{ position:"absolute", inset:0, zIndex:55, background:"#08080af2", backdropFilter:"blur(10px)", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px", overflowY:"auto" }}>
+          <div onClick={e => e.stopPropagation()} className={anim("reveal")} style={{ width:"100%", maxWidth:480, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"22px", display:"flex", flexDirection:"column", gap:14, marginTop:"4vh", marginBottom:"4vh" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:23, color:"#e8c84a" }}>Biblioteca</div>
+              <button onClick={() => setPanel(null)} style={{ background:"transparent", border:"none", color:"#9a948a", cursor:"pointer", fontSize:26, lineHeight:1 }}>×</button>
+            </div>
+            {Object.keys(docsMap).length === 0 && <div style={{ fontSize:13, color:"#6a665e" }}>Aún no has abierto documentos. Carga un EPUB, PDF, DOCX o pega texto y aparecerá aquí para retomarlo.</div>}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {Object.entries(docsMap).sort((a,b) => (b[1].lastTs||0)-(a[1].lastTs||0)).map(([key, d]) => {
+                const done = d.maxPct >= 95;
+                return (
+                  <button key={key} className="ctrl-btn" onClick={() => openFromLibrary(key)}
+                    style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, background: key===docKey?"#e8c84a1f":"#0a0a0c", border:`1px solid ${key===docKey?"#e8c84a":"#1a1814"}`, color:"#cfc8ba", borderRadius:12, padding:"13px 14px", cursor:"pointer", fontSize:14, fontFamily:"inherit", textAlign:"left" }}>
+                    <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{d.name}</span>
+                    <span className="mono" style={{ fontSize:11, color: done?"#5fb86a":"#7a746a", flexShrink:0 }}>{done ? "✓ leído" : `${Math.round(d.maxPct)}%`}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize:11, color:"#4a463f", lineHeight:1.5 }}>Los documentos se guardan en este dispositivo. Toca uno para retomarlo donde lo dejaste.</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CALIBRATION OVERLAY ── */}
+      {calibrating && (
+        <CalibrationOverlay pivotColor={pivotColor} fontSize={fontSize} reduce={reduce}
+          onClose={() => setCalibrating(false)}
+          onApply={(v) => { setWpm(v); setMode(null); }}
+          onSave={saveCalibration} />
+      )}
+
+      {/* ── HISTORY OVERLAY ── */}
+      {panel === "history" && (
+        <div style={{ position:"absolute", inset:0, zIndex:50, background:"#08080aee", backdropFilter:"blur(8px)", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"24px", overflowY:"auto" }}>
+          <div className={anim("reveal")} style={{ width:"100%", maxWidth:520, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"24px", display:"flex", flexDirection:"column", gap:18, marginTop:"4vh", marginBottom:"4vh" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#e8c84a" }}>Velocidad vs retención</div>
+              <button onClick={() => setPanel(null)} style={{ background:"transparent", border:"none", color:"#9a948a", cursor:"pointer", fontSize:26, lineHeight:1 }}>×</button>
+            </div>
+            {history.filter(h => h.retention).length >= 2 ? (
+              <ScatterRetention data={history.filter(h => h.retention)} />
+            ) : (
+              <div style={{ fontSize:13, color:"#6a665e", padding:"8px 0" }}>Aún no hay suficientes sesiones puntuadas. Puntúa la retención al cerrar cada sesión para ver si se degrada al subir de velocidad.</div>
+            )}
+            <div style={{ borderTop:"1px solid #1a1814", paddingTop:14, display:"flex", flexDirection:"column", gap:10 }}>
+              <div style={{ fontSize:11, color:"#55514a", letterSpacing:"0.1em", textTransform:"uppercase" }}>Historial</div>
+              {history.length === 0 && <div style={{ fontSize:13, color:"#6a665e" }}>Sin sesiones guardadas todavía.</div>}
+              {history.map((h, i) => (
+                <div key={i} style={{ background:"#0a0a0c", border:"1px solid #1a1814", borderRadius:12, padding:"12px 14px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                    <span style={{ fontSize:13, color:"#cfc8ba", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>{h.doc}</span>
+                    <span className="mono" style={{ fontSize:12, color:"#e8c84a" }}>{h.wpm}·cad</span>
+                    {h.retention ? <span className="mono" style={{ fontSize:12, color:"#5fb86a" }}>ret {h.retention}/5</span> : null}
+                  </div>
+                  {h.note && <div style={{ fontSize:13, color:"#8a857c", marginTop:6, fontStyle:"italic" }}>“{h.note}”</div>}
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
+                    <div className="mono" style={{ fontSize:10, color:"#4a463f" }}>{fmtDate(h.ts)} · {fmtMs(h.ms)}</div>
+                    <button className="ctrl-btn" onClick={() => exportMarkdown(h)} style={{ background:"transparent", border:"1px solid #26241f", color:"#7a746a", borderRadius:7, padding:"4px 10px", fontSize:11, cursor:"pointer" }}>.md</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ── */}
+      <div className={mounted ? anim("reveal") : ""} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"max(14px, env(safe-area-inset-top)) 18px 12px", borderBottom:"1px solid #161410", gap:8, position:"relative", zIndex:2 }}>
+        <span style={{ fontFamily:"'Fraunces',serif", fontSize:19, color:"#e8c84a", flexShrink:0, fontWeight:600 }}>
+          Lector<span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:9, color:"#55514a", letterSpacing:"0.12em", textTransform:"uppercase", marginLeft:7, fontWeight:400 }}>Gonzalo Sabater</span>
+        </span>
+        <div className="mono" style={{ fontSize:11, color:"#55514a", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", textAlign:"center" }}>{loading ? "procesando…" : `${words.length.toLocaleString()} palabras`}</div>
+        <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+          <button className="ctrl-btn" onClick={() => setPanel(p => p==="history"?null:"history")} style={{ background:"transparent", border:`1px solid ${panel==="history"?"#e8c84a":"#26241f"}`, color:panel==="history"?"#e8c84a":"#9a948a", borderRadius:9, padding:"9px 12px", fontSize:14, minHeight:40, cursor:"pointer" }}>↗</button>
+          <button className="ctrl-btn" onClick={() => setPanel(p => p==="stats"?null:"stats")} style={{ background:panel==="stats"?"#e8c84a1f":"transparent", border:`1px solid ${panel==="stats"?"#e8c84a":"#26241f"}`, color:panel==="stats"?"#e8c84a":"#9a948a", borderRadius:9, padding:"9px 12px", fontSize:14, minHeight:40, cursor:"pointer" }}>◷</button>
+          <button className="ctrl-btn" onClick={() => setPanel(p => p==="input"?null:"input")} style={{ background:panel==="input"?"#e8c84a1f":"transparent", border:`1px solid ${panel==="input"?"#e8c84a":"#26241f"}`, color:panel==="input"?"#e8c84a":"#9a948a", borderRadius:9, padding:"9px 12px", fontSize:13, minHeight:40, cursor:"pointer" }}>Texto</button>
+          <button className="ctrl-btn" onClick={() => setPanel(p => p==="library"?null:"library")} style={{ background:panel==="library"?"#e8c84a1f":"transparent", border:`1px solid ${panel==="library"?"#e8c84a":"#26241f"}`, color:panel==="library"?"#e8c84a":"#9a948a", borderRadius:9, padding:"9px 12px", fontSize:14, minHeight:40, cursor:"pointer" }}>☰</button>
+          <button className="ctrl-btn" onClick={() => fileInputRef.current?.click()} disabled={loading} style={{ background:"transparent", border:"1px solid #26241f", color:loading?"#3a372f":"#9a948a", borderRadius:9, padding:"9px 12px", fontSize:13, minHeight:40, cursor:"pointer" }}>{loading ? "…" : "Archivo"}</button>
+          <input ref={fileInputRef} type="file" accept=".txt,.md,.docx,.epub,.pdf" style={{ display:"none" }} onChange={handleFile} />
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ background:"#2a1414", borderBottom:"1px solid #4a2020", padding:"10px 18px", fontSize:13, color:"#f0a0a0", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, position:"relative", zIndex:2 }}>
+          <span style={{ flex:1 }}>{error}</span>
+          <button onClick={() => setError("")} style={{ background:"transparent", border:"none", color:"#f0a0a0", cursor:"pointer", fontSize:22, lineHeight:1 }}>×</button>
+        </div>
+      )}
+
+      {panel === "stats" && (
+        <Dashboard metrics={metrics} cadence={cadence} calibration={calibration} calibrations={calibrations}
+          sessionLog={sessionLog} docsMap={docsMap} history={history} reduce={reduce}
+          onClose={() => setPanel(null)} fmtTime={fmtTime} fmtMs={fmtMs} fmtDate={fmtDate} />
+      )}
+
+      {panel === "input" && (
+        <div className={anim("reveal")} style={{ background:"#0e0e10", borderBottom:"1px solid #161410", padding:"14px 18px", display:"flex", flexDirection:"column", gap:10, position:"relative", zIndex:2 }}>
+          <textarea value={inputText} onChange={e => setInputText(e.target.value)} placeholder="Pega aquí tu texto…"
+            style={{ width:"100%", background:"#08080a", border:"1px solid #26241f", color:"#e8e3d8", borderRadius:10, padding:"12px 14px", fontSize:15, resize:"vertical", minHeight:90, fontFamily:"inherit" }} />
+          <button className="ctrl-btn" onClick={handleLoadText} style={{ background:"#e8c84a", color:"#08080a", border:"none", borderRadius:10, padding:"13px", fontSize:15, fontWeight:600, cursor:"pointer", minHeight:48 }}>Cargar texto</button>
+        </div>
+      )}
+
+      {/* chapter nav: prev / current (opens list) / next */}
+      {chapters.length > 1 && (
+        <div style={{ background:"#0b0b0d", borderBottom:"1px solid #161410", padding:"8px 14px", display:"flex", alignItems:"center", gap:8, position:"relative", zIndex:2 }}>
+          <button className="ctrl-btn" onClick={prevChapter} disabled={currentChapterIdx <= 0}
+            style={{ background:"transparent", border:"1px solid #26241f", color: currentChapterIdx<=0?"#33302a":"#9a948a", borderRadius:8, width:38, height:36, cursor: currentChapterIdx<=0?"default":"pointer", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>◂</button>
+          <button className="ctrl-btn" onClick={() => setShowChapters(true)}
+            style={{ flex:1, background:"transparent", border:"1px solid #26241f", color:"#cfc8ba", borderRadius:8, height:36, cursor:"pointer", fontSize:12.5, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            <span>Capítulo {currentChapterIdx + 1} de {chapters.length}</span>
+            <span className="mono" style={{ fontSize:10, color:"#6a665e" }}>▾</span>
+          </button>
+          <button className="ctrl-btn" onClick={nextChapter} disabled={currentChapterIdx >= chapters.length - 1}
+            style={{ background:"transparent", border:"1px solid #26241f", color: currentChapterIdx>=chapters.length-1?"#33302a":"#9a948a", borderRadius:8, width:38, height:36, cursor: currentChapterIdx>=chapters.length-1?"default":"pointer", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>▸</button>
+        </div>
+      )}
+
+      {training && curBlock && (
+        <div style={{ background:`${curBlock.color}14`, borderBottom:`1px solid ${curBlock.color}33`, padding:"10px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"relative", zIndex:2 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{ width:8, height:8, borderRadius:"50%", background:curBlock.color }} />
+            <span style={{ fontSize:13, color:curBlock.color, fontWeight:600 }}>{curBlock.label}</span>
+            <span className="mono" style={{ fontSize:11, color:"#55514a" }}>bloque {training.blockIdx + 1}/{TRAINING_BLOCKS.length}</span>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+            <span className="mono" style={{ fontSize:15, color:"#e8e3d8" }}>{fmtClock(blockRemaining)}</span>
+            <button className="ctrl-btn" onClick={stopTraining} style={{ background:"transparent", border:"1px solid #33302a", color:"#9a948a", borderRadius:8, padding:"5px 12px", fontSize:12, cursor:"pointer" }}>Detener</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reader area (tap = play/pause) ── */}
+      <div onClick={handlePlayPause} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 0", position:"relative", minHeight:0, cursor:"pointer", zIndex:2 }}>
+        {/* reticle exactly on pivot x */}
+        <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, top:"calc(50% - 62px)", transform:"translateX(-50%)", width:1, height:18, background:`${pc}66`, pointerEvents:"none" }} />
+        <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, bottom:"calc(50% - 62px)", transform:"translateX(-50%)", width:1, height:18, background:`${pc}66`, pointerEvents:"none" }} />
+
+        <div key={index} className={playing ? anim("word-pop") : ""} style={{ width:"100%", maxWidth:760, minHeight:90, display:"flex", alignItems:"center", padding:"16px 0" }}>
+          {loading ? (
+            <span style={{ color:"#3a372f", fontFamily:"'Fraunces',serif", fontSize:24, width:"100%", textAlign:"center" }}>Procesando…</span>
+          ) : currentWord ? (
+            <WordDisplay word={currentWord} fontSize={fontSize} pivotColor={pc} />
+          ) : (
+            <span style={{ color:"#3a372f", fontFamily:"'Fraunces',serif", fontSize:24, width:"100%", textAlign:"center" }}>Carga un texto</span>
+          )}
+        </div>
+
+        <div className="mono" style={{ display:"flex", gap:18, marginTop:30, fontSize:10, color:"#3a372f", letterSpacing:"0.08em", textTransform:"uppercase", flexWrap:"wrap", justifyContent:"center" }}>
+          <span>{Math.min(index + 1, words.length)} / {words.length}</span>
+          <span>{remaining > 0 ? `~${remaining} min` : "fin"}</span>
+          <span>{Math.round(progress)}%</span>
+          {!playing && !training && <span style={{ color:"#2a2824" }}>tap = play</span>}
+        </div>
+      </div>
+
+      {/* ── Scrubbable progress ── */}
+      <div ref={trackRef} onPointerDown={handleScrubStart} onPointerMove={handleScrubMove} onPointerUp={handleScrubEnd} onPointerCancel={handleScrubEnd}
+        style={{ width:"100%", cursor:"pointer", background:"#0d0c0b", padding:"16px 0", touchAction:"none", position:"relative", zIndex:2, borderTop:"1px solid #141210" }}>
+        <div style={{ position:"relative", height: scrubbing ? 7 : 4, margin:"0 16px", background:"#22201b", borderRadius:4, transition:reduce?"none":"height 0.15s ease" }}>
+          <div style={{ position:"absolute", left:0, top:0, bottom:0, width:`${progress}%`, background:"linear-gradient(to right,#9a7d22,#e8c84a)", borderRadius:4, transition: scrubbing||reduce ? "none" : "width 0.1s linear", boxShadow: scrubbing ? "0 0 12px #e8c84a55" : "none" }} />
+          <div style={{ position:"absolute", top:"50%", left:`${progress}%`, width:scrubbing?20:13, height:scrubbing?20:13, background:"#e8c84a", borderRadius:"50%", transform:"translate(-50%,-50%)", transition:reduce?"none":"all 0.12s ease", boxShadow: scrubbing ? "0 0 0 6px #e8c84a22,0 2px 8px #00000088" : "0 1px 4px #00000088" }} />
+          {scrubbing && (
+            <div className="mono" style={{ position:"absolute", bottom:"calc(100% + 12px)", left:`${progress}%`, transform:"translateX(-50%)", background:"#1a1814", border:"1px solid #e8c84a55", color:"#e8c84a", padding:"5px 11px", borderRadius:8, fontSize:14, whiteSpace:"nowrap", boxShadow:"0 4px 14px #00000099" }}>
+              {Math.round(progress)}% · {Math.min(index + 1, words.length)}/{words.length}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Controls console ── */}
+      <div className="panel" style={{ borderTop:"1px solid #161410", padding:"16px 16px calc(16px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:15, position:"relative", zIndex:2 }}>
+
+        <div style={{ display:"flex", gap:7, justifyContent:"center" }}>
+          {Object.entries(MODES).map(([key, m]) => {
+            const active = mode === key && !training;
+            return (
+              <button key={key} className="ctrl-btn" onClick={() => applyMode(key)}
+                style={{ flex:1, maxWidth:110, background:active?`${m.color}1f`:"transparent", border:`1px solid ${active?m.color:"#26241f"}`, color:active?m.color:"#7a746a", borderRadius:11, padding:"9px 6px", fontSize:12.5, cursor:"pointer", minHeight:46 }}>
+                <div style={{ fontWeight:600 }}>{m.label}</div>
+                <div className="mono" style={{ fontSize:10, color:active?m.color:"#3a372f", marginTop:2 }}>{m.wpm} wpm</div>
+              </button>
+            );
+          })}
+          <button className="ctrl-btn" onClick={training ? stopTraining : startTraining}
+            style={{ flex:1, maxWidth:110, background:training?"#e87a4a1f":"#e8c84a14", border:`1px solid ${training?"#e87a4a":"#e8c84a55"}`, color:training?"#e87a4a":"#e8c84a", borderRadius:11, padding:"9px 6px", fontSize:12.5, cursor:"pointer", minHeight:46 }}>
+            <div style={{ fontWeight:600 }}>{training ? "Detener" : "Entrenar"}</div>
+            <div className="mono" style={{ fontSize:10, color:training?"#e87a4a":"#8a7838", marginTop:2 }}>{training ? "en curso" : "23 min"}</div>
+          </button>
+        </div>
+
+        <button className="ctrl-btn" onClick={() => setCalibrating(true)}
+          style={{ background:"#7a9ee814", border:"1px solid #7a9ee855", color:"#7a9ee8", borderRadius:11, padding:"11px", fontSize:13, cursor:"pointer", minHeight:46, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+          <span style={{ fontWeight:600 }}>Calibrar mi velocidad</span>
+          {calibration && <span className="mono" style={{ fontSize:11, color:"#5fb86a" }}>óptimo {calibration.optimal} · techo {calibration.ceiling || "—"}</span>}
+        </button>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:14 }}>
+            <button className="ctrl-btn" onClick={() => adjustWpm(-25)} style={{ background:"#121110", border:"1px solid #2a2820", color:"#bbb4a6", borderRadius:12, width:52, height:52, fontSize:26, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:300 }}>−</button>
+            <div style={{ textAlign:"center", minWidth:120 }}>
+              <div className="mono" style={{ fontSize:32, fontWeight:500, color:"#e8c84a", lineHeight:1 }}>{wpm}</div>
+              <div style={{ fontSize:10, color:"#55514a", letterSpacing:"0.18em", textTransform:"uppercase", marginTop:4 }}>wpm{mode ? ` · ${MODES[mode].label}` : ""}</div>
+            </div>
+            <button className="ctrl-btn" onClick={() => adjustWpm(25)} style={{ background:"#121110", border:"1px solid #2a2820", color:"#bbb4a6", borderRadius:12, width:52, height:52, fontSize:26, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:300 }}>+</button>
+          </div>
+          <div className="wpm-scroll">
+            {wpmOptions.map(w => (
+              <button key={w} className={`pill mono ${wpm===w?"active":""}`} onClick={() => { setWpm(w); setMode(null); }}
+                style={{ background:"transparent", border:`1px solid ${wpm===w?"#e8c84a":"#26241f"}`, color:wpm===w?"#e8c84a":"#7a746a", borderRadius:20, padding:"8px 16px", fontSize:13, cursor:"pointer", minHeight:38, whiteSpace:"nowrap" }}>{w}</button>
+            ))}
+          </div>
+          {wpm > 500 && <div style={{ fontSize:10, color:"#6a5a3a", textAlign:"center", letterSpacing:"0.04em" }}>Por encima de ~450 wpm en texto denso la comprensión cae; útil para triaje.</div>}
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:16 }}>
+          <button className="ctrl-btn" onClick={handleRestart} title="Reiniciar (R)" style={{ background:"transparent", border:"1px solid #1e1c18", color:"#55514a", borderRadius:12, width:50, height:50, cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center" }}>⟨⟨</button>
+          <button className="ctrl-btn" onClick={handleBack} title="−10 (←)" style={{ background:"transparent", border:"1px solid #1e1c18", color:"#7a746a", borderRadius:12, width:50, height:50, cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center" }}>◂◂</button>
+          <button className={`ctrl-btn ${!playing ? anim("play-idle") : ""}`} onClick={handlePlayPause} style={{ background:playing?"#e8c84a":"#e8c84a1f", border:`1px solid ${playing?"#e8c84a":"#e8c84a55"}`, color:playing?"#08080a":"#e8c84a", borderRadius:18, width:74, height:74, cursor:"pointer", fontSize:26, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700 }}>{playing ? "▐▐" : "▶"}</button>
+          <button className="ctrl-btn" onClick={handleForward} title="+10 (→)" style={{ background:"transparent", border:"1px solid #1e1c18", color:"#7a746a", borderRadius:12, width:50, height:50, cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center" }}>▸▸</button>
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontSize:13, color:"#55514a", fontFamily:"'Fraunces',serif" }}>A</span>
+          <input type="range" min={28} max={110} step={2} value={fontSize} onChange={e => setFontSize(Number(e.target.value))} style={{ flex:1 }} />
+          <span style={{ fontSize:22, color:"#7a746a", fontFamily:"'Fraunces',serif" }}>A</span>
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{ fontSize:11, color:"#3a372f", textTransform:"uppercase", letterSpacing:"0.1em" }}>foco</span>
+            <div style={{ display:"flex", gap:8 }}>
+              {Object.entries(PIVOT_COLORS).map(([key, c]) => {
+                const active = pivotColor === key;
+                return (
+                  <button key={key} className="ctrl-btn" onClick={() => setPivotColor(key)} title={c.label}
+                    style={{ width:40, height:40, borderRadius:11, cursor:"pointer", background:"transparent", border:`1.5px solid ${active?c.value:"#26241f"}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <span style={{ width:17, height:17, borderRadius:"50%", background:c.value, boxShadow:active?`0 0 8px ${c.value}88`:"none" }} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <button className="ctrl-btn" onClick={() => setChecksOn(v => !v)} title="Cada ~3 min pausa y pregunta de qué iba el último párrafo"
+            style={{ background:checksOn?"#5fb86a1f":"transparent", border:`1px solid ${checksOn?"#5fb86a":"#26241f"}`, color:checksOn?"#5fb86a":"#6a665e", borderRadius:10, padding:"9px 12px", fontSize:11.5, cursor:"pointer", minHeight:40, whiteSpace:"nowrap" }}>
+            Pausas de control {checksOn ? "·on" : "·off"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Speed vs retention scatter (SVG, no deps) ─────────────────────────────────
+function ScatterRetention({ data }) {
+  const W = 460, H = 180, pad = 34;
+  const wpms = data.map(d => d.wpm);
+  const minW = Math.min(...wpms, 200), maxW = Math.max(...wpms, 500);
+  const xScale = (w) => pad + ((w - minW) / Math.max(1, maxW - minW)) * (W - 2 * pad);
+  const yScale = (r) => H - pad - ((r - 1) / 4) * (H - 2 * pad);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto" }}>
+      {[1,2,3,4,5].map(r => (
+        <g key={r}>
+          <line x1={pad} y1={yScale(r)} x2={W-pad} y2={yScale(r)} stroke="#1a1814" strokeWidth="1" />
+          <text x={pad-8} y={yScale(r)+4} fill="#55514a" fontSize="10" textAnchor="end" fontFamily="monospace">{r}</text>
+        </g>
+      ))}
+      <text x={pad-8} y={pad-10} fill="#55514a" fontSize="9" textAnchor="end" fontFamily="monospace">ret</text>
+      {[minW, Math.round((minW+maxW)/2), maxW].map((w,i) => (
+        <text key={i} x={xScale(w)} y={H-pad+16} fill="#55514a" fontSize="10" textAnchor="middle" fontFamily="monospace">{w}</text>
+      ))}
+      <text x={W-pad} y={H-6} fill="#55514a" fontSize="9" textAnchor="end" fontFamily="monospace">cadencia (wpm)</text>
+      {data.map((d, i) => (
+        <circle key={i} cx={xScale(d.wpm)} cy={yScale(d.retention)} r="5" fill="#e8c84a" opacity="0.8" />
+      ))}
+    </svg>
+  );
+}
+
+// ── Calibration overlay: rising-speed passages + MCQ → optimal speed ──────────
+function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, reduce }) {
+  const [stage, setStage] = useState("intro"); // intro | countdown | reading | quiz | done
+  const [pIdx, setPIdx] = useState(0);
+  const [results, setResults] = useState([]); // {wpm, comp}
+  const [wordIdx, setWordIdx] = useState(0);
+  const [answers, setAnswers] = useState([]);
+  const [countdown, setCountdown] = useState(3);
+
+  const passage = CALIB_PASSAGES[pIdx];
+  const speed = CALIB_SPEEDS[pIdx];
+  const words = passage ? parseText(passage.text) : [];
+  const timeoutRef = useRef(null);
+  const idxRef = useRef(0); idxRef.current = wordIdx;
+  const anim = (n) => reduce ? "" : n;
+
+  // countdown → reading
+  useEffect(() => {
+    if (stage !== "countdown") return;
+    if (countdown <= 0) { setStage("reading"); setWordIdx(0); return; }
+    const t = setTimeout(() => setCountdown(c => c - 1), 700);
+    return () => clearTimeout(t);
+  }, [stage, countdown]);
+
+  // reading engine (isolated)
+  useEffect(() => {
+    if (stage !== "reading") return;
+    const run = () => {
+      const w = words[idxRef.current] || "";
+      const delay = getDelay(w, speed, 0.7);
+      timeoutRef.current = setTimeout(() => {
+        const next = idxRef.current + 1;
+        if (next >= words.length) { setStage("quiz"); setAnswers([]); return; }
+        setWordIdx(next); run();
+      }, delay);
+    };
+    run();
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
+  }, [stage]); // eslint-disable-line
+
+  const startPassage = () => { setCountdown(3); setStage("countdown"); };
+  const answerQ = (qi, oi) => setAnswers(a => { const n = [...a]; n[qi] = oi; return n; });
+  const submitQuiz = () => {
+    let correct = 0;
+    passage.questions.forEach((q, i) => { if (answers[i] === q.correct) correct++; });
+    const comp = correct / passage.questions.length;
+    const newResults = [...results, { wpm: speed, comp }];
+    setResults(newResults);
+    if (pIdx + 1 >= CALIB_PASSAGES.length) {
+      setStage("done");
+      onSave(newResults);
+    } else { setPIdx(pIdx + 1); setStage("intro2"); }
+  };
+
+  const allAnswered = passage && answers.length === passage.questions.length && answers.every(a => a !== undefined);
+  const analysis = stage === "done" ? analyzeCalibration(results) : null;
+  const pc = PIVOT_COLORS[pivotColor].value;
+
+  const wrap = { position:"absolute", inset:0, zIndex:60, background:"#08080af2", backdropFilter:"blur(10px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px" };
+  const card = { width:"100%", maxWidth:480, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"28px 24px", display:"flex", flexDirection:"column", gap:18, maxHeight:"92vh", overflowY:"auto" };
+
+  return (
+    <div style={wrap}>
+      <div className={anim("reveal")} style={card}>
+        {(stage === "intro" || stage === "intro2") && (
+          <>
+            <div style={{ fontFamily:"'Fraunces',serif", fontSize:25, color:"#e8c84a" }}>Calibración</div>
+            {stage === "intro" ? (
+              <div style={{ fontSize:14, color:"#a8a298", lineHeight:1.55 }}>
+                Cinco pasajes breves a velocidad creciente (250 → 600). Tras cada uno, tres preguntas. No podrás volver atrás: lee como si fuera real. Al final verás tu curva velocidad/comprensión y tu velocidad óptima honesta. Dura unos 6 minutos.
+              </div>
+            ) : (
+              <div style={{ fontSize:14, color:"#a8a298", lineHeight:1.55 }}>
+                Pasaje {pIdx + 1} de {CALIB_PASSAGES.length}. Siguiente velocidad: <span className="mono" style={{ color:"#e8c84a" }}>{speed} wpm</span>.
+              </div>
+            )}
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={onClose} style={{ flex:1, background:"transparent", border:"1px solid #33302a", color:"#9a948a", borderRadius:12, padding:"13px", fontSize:14, cursor:"pointer" }}>Salir</button>
+              <button onClick={startPassage} style={{ flex:2, background:"#e8c84a", color:"#08080a", border:"none", borderRadius:12, padding:"13px", fontSize:15, fontWeight:600, cursor:"pointer" }}>{stage === "intro" ? "Empezar" : "Continuar"}</button>
+            </div>
+          </>
+        )}
+
+        {stage === "countdown" && (
+          <div style={{ textAlign:"center", padding:"40px 0" }}>
+            <div className="mono" style={{ fontSize:64, color:"#e8c84a", fontWeight:500 }}>{countdown > 0 ? countdown : "¡Ya!"}</div>
+            <div style={{ fontSize:13, color:"#6a665e", marginTop:10 }}>{speed} wpm · pasaje {pIdx + 1}/{CALIB_PASSAGES.length}</div>
+          </div>
+        )}
+
+        {stage === "reading" && (
+          <div style={{ position:"relative", padding:"40px 0", minHeight:160, display:"flex", alignItems:"center" }}>
+            <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, top:"calc(50% - 40px)", transform:"translateX(-50%)", width:1, height:14, background:`${pc}66` }} />
+            <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, bottom:"calc(50% - 40px)", transform:"translateX(-50%)", width:1, height:14, background:`${pc}66` }} />
+            <div style={{ width:"100%" }}><WordDisplay word={words[wordIdx]} fontSize={Math.min(fontSize, 52)} pivotColor={pc} /></div>
+          </div>
+        )}
+
+        {stage === "quiz" && (
+          <>
+            <div style={{ fontSize:12, color:"#6a665e", letterSpacing:"0.08em", textTransform:"uppercase" }}>Pasaje {pIdx + 1} · {speed} wpm</div>
+            {passage.questions.map((q, qi) => (
+              <div key={qi} style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                <div style={{ fontSize:14, color:"#e8e3d8", fontWeight:500 }}>{q.q}</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {q.opts.map((opt, oi) => {
+                    const sel = answers[qi] === oi;
+                    return (
+                      <button key={oi} onClick={() => answerQ(qi, oi)}
+                        style={{ textAlign:"left", background: sel ? "#e8c84a1f" : "#08080a", border:`1px solid ${sel ? "#e8c84a" : "#26241f"}`, color: sel ? "#e8c84a" : "#a8a298", borderRadius:10, padding:"11px 14px", fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>{opt}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <button disabled={!allAnswered} onClick={submitQuiz}
+              style={{ background: allAnswered ? "#e8c84a" : "#26241f", color: allAnswered ? "#08080a" : "#55514a", border:"none", borderRadius:12, padding:"14px", fontSize:15, fontWeight:600, cursor: allAnswered ? "pointer" : "default" }}>
+              {pIdx + 1 >= CALIB_PASSAGES.length ? "Ver resultado" : "Siguiente pasaje"}
+            </button>
+          </>
+        )}
+
+        {stage === "done" && analysis && (
+          <>
+            <div style={{ fontFamily:"'Fraunces',serif", fontSize:25, color:"#e8c84a" }}>Tu curva</div>
+            <CalibCurve points={results} />
+            <div style={{ display:"flex", justifyContent:"space-around", gap:10, padding:"14px 0", borderTop:"1px solid #1a1814", borderBottom:"1px solid #1a1814" }}>
+              {[{ v: analysis.optimal, l: "óptimo", c: "#5fb86a" }, { v: analysis.ceiling || "—", l: "techo 70%", c: "#e87a4a" }, { v: analysis.basal || "—", l: "cómodo", c: "#7a9ee8" }].map((s, i) => (
+                <div key={i} style={{ textAlign:"center" }}>
+                  <div className="mono" style={{ fontSize:24, fontWeight:500, color:s.c, lineHeight:1 }}>{s.v}</div>
+                  <div style={{ fontSize:10, color:"#6a665e", letterSpacing:"0.06em", textTransform:"uppercase", marginTop:6 }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize:13.5, color:"#a8a298", lineHeight:1.55 }}>
+              Tu comprensión se mantiene sólida hasta <span className="mono" style={{ color:"#5fb86a" }}>{analysis.optimal} wpm</span>. {analysis.ceiling ? <>A partir de unas <span className="mono" style={{ color:"#e87a4a" }}>{analysis.ceiling} wpm</span> cae por debajo del 70 %: reserva esa zona para triaje, no para lectura cuidadosa.</> : <>Mantuviste buena comprensión en todo el rango probado; puedes intentar velocidades algo mayores en otra calibración.</>} Para lectura de trabajo, fija tu ritmo en torno al óptimo.
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={onClose} style={{ flex:1, background:"transparent", border:"1px solid #33302a", color:"#9a948a", borderRadius:12, padding:"13px", fontSize:14, cursor:"pointer" }}>Cerrar</button>
+              <button onClick={() => { onApply(analysis.optimal); onClose(); }} style={{ flex:2, background:"#e8c84a", color:"#08080a", border:"none", borderRadius:12, padding:"13px", fontSize:15, fontWeight:600, cursor:"pointer" }}>Aplicar {analysis.optimal} wpm</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Calibration curve: wpm (x) vs comprehension % (y), with 70% threshold line
+function CalibCurve({ points }) {
+  const W = 432, H = 190, pad = 36;
+  const xs = points.map(p => p.wpm);
+  const minW = Math.min(...xs), maxW = Math.max(...xs);
+  const xScale = (w) => pad + ((w - minW) / Math.max(1, maxW - minW)) * (W - 2 * pad);
+  const yScale = (c) => H - pad - c * (H - 2 * pad);
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${xScale(p.wpm)},${yScale(p.comp)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto" }}>
+      {[0, 0.25, 0.5, 0.7, 1].map(c => (
+        <g key={c}>
+          <line x1={pad} y1={yScale(c)} x2={W - pad} y2={yScale(c)} stroke={c === 0.7 ? "#e87a4a44" : "#1a1814"} strokeWidth="1" strokeDasharray={c === 0.7 ? "4 4" : "0"} />
+          <text x={pad - 8} y={yScale(c) + 4} fill={c === 0.7 ? "#e87a4a" : "#55514a"} fontSize="9" textAnchor="end" fontFamily="monospace">{Math.round(c * 100)}</text>
+        </g>
+      ))}
+      {points.map((p, i) => (
+        <text key={i} x={xScale(p.wpm)} y={H - pad + 15} fill="#55514a" fontSize="9" textAnchor="middle" fontFamily="monospace">{p.wpm}</text>
+      ))}
+      <path d={path} fill="none" stroke="#e8c84a" strokeWidth="2" />
+      {points.map((p, i) => (
+        <circle key={i} cx={xScale(p.wpm)} cy={yScale(p.comp)} r="4.5" fill={p.comp >= 0.7 ? "#5fb86a" : "#e87a4a"} />
+      ))}
+    </svg>
+  );
+}
+
+// ── Dashboard cognitivo: tiles + curva de aprendizaje + throughput efectivo ───
+function Dashboard({ metrics, cadence, calibration, calibrations, sessionLog, docsMap, history, reduce, onClose, fmtTime, fmtMs, fmtDate }) {
+  const anim = (n) => reduce ? "" : n;
+  const now = Date.now();
+  const monthAgo = now - 30 * 86400000;
+
+  // words this month (from session log)
+  const monthWords = sessionLog.filter(s => s.ts >= monthAgo).reduce((a, s) => a + s.words, 0);
+  // completed docs (>=95%)
+  const completed = Object.values(docsMap).filter(d => d.maxPct >= 95).length;
+  const inProgress = Object.values(docsMap).filter(d => d.maxPct > 2 && d.maxPct < 95).length;
+
+  // effective throughput from latest calibration
+  const effPoints = calibration ? calibration.points.map(p => ({ wpm: p.wpm, comp: p.comp, eff: Math.round(p.wpm * p.comp) })) : [];
+  const peakEff = effPoints.length ? effPoints.reduce((m, p) => p.eff > m.eff ? p : m, effPoints[0]) : null;
+
+  // daily words last 30 days
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now - i * 86400000); const key = d.toISOString().slice(0, 10);
+    const w = sessionLog.filter(s => new Date(s.ts).toISOString().slice(0, 10) === key).reduce((a, s) => a + s.words, 0);
+    days.push({ key, w });
+  }
+  const maxDay = Math.max(1, ...days.map(d => d.w));
+
+  const tiles = [
+    { l: "Palabras / mes", v: monthWords.toLocaleString(), c: "#e8c84a" },
+    { l: "Horas totales", v: (metrics.totalMs / 3600000).toFixed(1), c: "#e8c84a" },
+    { l: "Velocidad óptima", v: calibration ? calibration.optimal : "—", c: "#5fb86a" },
+    { l: "Máx. sostenible", v: calibration?.ceiling || "—", c: "#e87a4a" },
+    { l: "Completados", v: completed, c: "#7a9ee8" },
+    { l: "Racha", v: `${metrics.streak} d`, c: "#e8c84a" },
+  ];
+
+  return (
+    <div onClick={onClose} style={{ position:"absolute", inset:0, zIndex:55, background:"#08080af2", backdropFilter:"blur(10px)", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px", overflowY:"auto" }}>
+      <div onClick={e => e.stopPropagation()} className={anim("reveal")} style={{ width:"100%", maxWidth:540, background:"#0e0e10", border:"1px solid #1f1d18", borderRadius:20, padding:"22px", display:"flex", flexDirection:"column", gap:20, marginTop:"3vh", marginBottom:"3vh" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:25, color:"#e8c84a" }}>Panel cognitivo</div>
+          <button onClick={onClose} style={{ background:"transparent", border:"none", color:"#9a948a", cursor:"pointer", fontSize:26, lineHeight:1 }}>×</button>
+        </div>
+
+        {/* Tiles */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+          {tiles.map((t, i) => (
+            <div key={i} style={{ background:"#0a0a0c", border:"1px solid #1a1814", borderRadius:12, padding:"14px 10px", textAlign:"center" }}>
+              <div className="mono" style={{ fontSize:22, fontWeight:500, color:t.c, lineHeight:1 }}>{t.v}</div>
+              <div style={{ fontSize:9.5, color:"#55514a", letterSpacing:"0.06em", textTransform:"uppercase", marginTop:6 }}>{t.l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Throughput efectivo — the honest reina metric */}
+        {peakEff && (
+          <div style={{ background:"#0a0a0c", border:"1px solid #1a1814", borderRadius:14, padding:"16px" }}>
+            <div style={{ fontSize:12, color:"#a8a298", letterSpacing:"0.04em", marginBottom:4 }}>Throughput efectivo · palabras absorbidas/min</div>
+            <div style={{ fontSize:11, color:"#55514a", marginBottom:14 }}>Velocidad × comprensión. Tu pico real está en <span className="mono" style={{ color:"#5fb86a" }}>{peakEff.wpm} wpm</span>, no en tu velocidad máxima.</div>
+            <EffChart points={effPoints} peak={peakEff} />
+          </div>
+        )}
+
+        {/* Curva de aprendizaje (evolution) or single calibration */}
+        <div style={{ background:"#0a0a0c", border:"1px solid #1a1814", borderRadius:14, padding:"16px" }}>
+          <div style={{ fontSize:12, color:"#a8a298", letterSpacing:"0.04em", marginBottom:14 }}>Curva de aprendizaje</div>
+          {calibrations.length >= 2 ? (
+            <EvolutionChart calibs={calibrations} />
+          ) : calibration ? (
+            <div style={{ fontSize:12, color:"#6a665e" }}>Tienes una calibración (óptimo {calibration.optimal} wpm). Haz más con el tiempo para ver si tu óptimo mejora.</div>
+          ) : (
+            <div style={{ fontSize:12, color:"#6a665e" }}>Sin calibraciones todavía. Usa “Calibrar mi velocidad” para empezar tu curva.</div>
+          )}
+        </div>
+
+        {/* Actividad mensual */}
+        <div style={{ background:"#0a0a0c", border:"1px solid #1a1814", borderRadius:14, padding:"16px" }}>
+          <div style={{ fontSize:12, color:"#a8a298", letterSpacing:"0.04em", marginBottom:14 }}>Actividad · últimos 30 días</div>
+          <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:70 }}>
+            {days.map((d, i) => (
+              <div key={i} title={`${d.w} palabras`} style={{ flex:1, height:`${Math.max(2, (d.w / maxDay) * 100)}%`, background: d.w > 0 ? "linear-gradient(to top,#8a7020,#e8c84a)" : "#1a1814", borderRadius:2, minHeight:2 }} />
+            ))}
+          </div>
+          <div className="mono" style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:"#55514a", marginTop:6 }}>
+            <span>hace 30 d</span><span>hoy</span>
+          </div>
+        </div>
+
+        {/* General stats */}
+        <div style={{ display:"flex", justifyContent:"space-around", gap:10, fontSize:12, color:"#8a857c", flexWrap:"wrap" }}>
+          <span>Total: <span className="mono" style={{ color:"#cfc8ba" }}>{metrics.totalWordsRead.toLocaleString()}</span> pal</span>
+          <span>Cadencia: <span className="mono" style={{ color:"#cfc8ba" }}>{cadence || "—"}</span></span>
+          <span>Sesiones: <span className="mono" style={{ color:"#cfc8ba" }}>{metrics.sessions}</span></span>
+          <span>En curso: <span className="mono" style={{ color:"#cfc8ba" }}>{inProgress}</span></span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Effective throughput chart: bars of wpm×comp, peak highlighted
+function EffChart({ points, peak }) {
+  const W = 480, H = 150, pad = 30;
+  const maxEff = Math.max(...points.map(p => p.eff), 1);
+  const bw = (W - 2 * pad) / points.length;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto" }}>
+      {points.map((p, i) => {
+        const h = (p.eff / maxEff) * (H - 2 * pad);
+        const x = pad + i * bw, isPeak = p.wpm === peak.wpm;
+        return (
+          <g key={i}>
+            <rect x={x + 4} y={H - pad - h} width={bw - 8} height={h} rx="3" fill={isPeak ? "#5fb86a" : "#3a4a3a"} opacity={isPeak ? 1 : 0.6} />
+            <text x={x + bw / 2} y={H - pad - h - 5} fill={isPeak ? "#5fb86a" : "#6a665e"} fontSize="11" textAnchor="middle" fontFamily="monospace">{p.eff}</text>
+            <text x={x + bw / 2} y={H - pad + 14} fill="#55514a" fontSize="9" textAnchor="middle" fontFamily="monospace">{p.wpm}</text>
+            <text x={x + bw / 2} y={H - pad + 25} fill="#3a372f" fontSize="8" textAnchor="middle" fontFamily="monospace">{Math.round(p.comp * 100)}%</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Evolution chart: óptimo + techo across calibrations over time
+function EvolutionChart({ calibs }) {
+  const W = 480, H = 160, pad = 36;
+  const data = [...calibs].sort((a, b) => a.ts - b.ts);
+  const opts = data.map(d => d.optimal);
+  const ceils = data.map(d => d.ceiling || d.optimal);
+  const minV = Math.min(...opts) - 40, maxV = Math.max(...ceils) + 40;
+  const xScale = (i) => pad + (data.length === 1 ? 0.5 : i / (data.length - 1)) * (W - 2 * pad);
+  const yScale = (v) => H - pad - ((v - minV) / Math.max(1, maxV - minV)) * (H - 2 * pad);
+  const line = (arr) => arr.map((v, i) => `${i === 0 ? "M" : "L"}${xScale(i)},${yScale(v)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:"auto" }}>
+      <path d={line(ceils)} fill="none" stroke="#e87a4a" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7" />
+      <path d={line(opts)} fill="none" stroke="#5fb86a" strokeWidth="2" />
+      {data.map((d, i) => (
+        <g key={i}>
+          <circle cx={xScale(i)} cy={yScale(d.optimal)} r="4" fill="#5fb86a" />
+          <circle cx={xScale(i)} cy={yScale(d.ceiling || d.optimal)} r="3" fill="#e87a4a" />
+          <text x={xScale(i)} y={H - 8} fill="#55514a" fontSize="9" textAnchor="middle" fontFamily="monospace">{new Date(d.ts).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })}</text>
+        </g>
+      ))}
+      <text x={pad} y={16} fill="#5fb86a" fontSize="10" fontFamily="monospace">óptimo</text>
+      <text x={pad + 60} y={16} fill="#e87a4a" fontSize="10" fontFamily="monospace">techo</text>
+    </svg>
+  );
+}
+
+// ── Mount ──
+const rootEl = document.getElementById("root");
+const boot = document.getElementById("boot");
+try {
+  ReactDOM.createRoot(rootEl).render(React.createElement(SpeedReader));
+  if (boot) boot.style.display = "none";
+} catch (err) {
+  if (boot) boot.textContent = "Error: " + err.message;
+  console.error(err);
+}
+</script>
+<script>
+// Register service worker (offline). Must be classic script, after Babel.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW:", e));
+  });
+}
+</script>
+</body>
+</html>
