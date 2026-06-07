@@ -74,3 +74,12 @@ app normal. Funciona sin conexión una vez cargada la primera vez.
   subcarpeta.
 - La URL debe terminar en `/` o en `/index.html`.
 - Dale 2 minutos tras activar Pages; a veces tarda en publicar.
+
+## Novedades de esta versión
+
+- **Modo audio (voz)**: interruptor abajo para alternar entre lectura visual RSVP y
+  escucha por voz. Velocidad de x1 a x2 en pasos de 0,1. La palabra se resalta siguiendo
+  a la voz. Usa la voz del sistema (gratis, offline). En iPhone, descarga una voz española
+  "(Mejorada)" en Ajustes → Accesibilidad → Contenido hablado → Voces → Español para
+  mejor calidad.
+- **Icono nuevo** (ojo con punto de foco dorado).

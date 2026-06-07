@@ -342,6 +342,10 @@ function SpeedReader() {
   const [sessionLog, setSessionLog] = useState([]);
   const [docsMap, setDocsMap] = useState({});
   const [showChapters, setShowChapters] = useState(false);
+  const [audioMode, setAudioMode] = useState(false);
+  const [audioRate, setAudioRate] = useState(1.0);
+  const [audioVoice, setAudioVoice] = useState(null);
+  const [voices, setVoices] = useState([]);
 
   const [metrics, setMetrics]   = useState({ totalWordsRead: 0, totalMs: 0, sessions: 0, lastDay: null, streak: 0, todayWords: 0, todayDay: null, lastActivity: 0 });
   const metricsRef = useRef(metrics);
@@ -458,7 +462,7 @@ function SpeedReader() {
 
   // Mejora 4: pausa automática al pasar la app a segundo plano
   useEffect(() => {
-    const onVis = () => { if (document.visibilityState === "hidden" && playingRef.current) { setPlaying(false); } };
+    const onVis = () => { if (document.visibilityState === "hidden" && playingRef.current) { setPlaying(false); playingRef.current = false; try { window.speechSynthesis.cancel(); } catch {} } };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
@@ -530,14 +534,14 @@ function SpeedReader() {
         return { ...prev, sessions, streak, lastDay, lastActivity: now };
       });
       if (!sessionStart) { setSessionStart(Date.now()); sessionWordsRef.current = 0; sessionMsRef.current = 0; lastCheckRef.current = 0; }
-      stop(); tick();
+      if (!audioMode) { stop(); tick(); }
     } else {
       stop(); flushMetrics();
     }
     return stop;
   }, [playing]); // eslint-disable-line
 
-  useEffect(() => { if (playingRef.current) { stop(); tick(); } }, [wpm, pauseScale, tick, stop]);
+  useEffect(() => { if (playingRef.current && !audioMode) { stop(); tick(); } }, [wpm, pauseScale, tick, stop]);
 
   // ── Training timer (advances only while playing) ────────────────────────────
   useEffect(() => {
@@ -621,17 +625,78 @@ function SpeedReader() {
   };
 
   // ── Controls ────────────────────────────────────────────────────────────────
+  // TTS: voz del navegador (gratis, offline)
+  useEffect(() => {
+    const synth = window.speechSynthesis; if (!synth) return;
+    const load = () => {
+      const vs = synth.getVoices(); setVoices(vs);
+      setAudioVoice(prev => {
+        if (prev && vs.some(v => v.voiceURI === prev)) return prev;
+        const es = vs.find(v => /es[-_]ES/i.test(v.lang)) || vs.find(v => /^es/i.test(v.lang));
+        return es ? es.voiceURI : (vs[0] ? vs[0].voiceURI : null);
+      });
+    };
+    load();
+    synth.onvoiceschanged = load;
+    return () => { try { synth.onvoiceschanged = null; } catch {} };
+  }, []);
+
+  const speakFrom = useCallback((startIdx) => {
+    const synth = window.speechSynthesis; if (!synth) return;
+    synth.cancel();
+    const slice = words.slice(startIdx);
+    if (!slice.length) return;
+    const chunks = []; let cur = [], curStart = startIdx, len = 0;
+    slice.forEach((w, k) => {
+      cur.push(w); len += w.length + 1;
+      if (len > 180 || /[.!?]$/.test(w)) { chunks.push({ words: cur, start: curStart }); curStart = startIdx + k + 1; cur = []; len = 0; }
+    });
+    if (cur.length) chunks.push({ words: cur, start: curStart });
+    const voiceObj = voices.find(v => v.voiceURI === audioVoice);
+    let ci = 0;
+    const next = () => {
+      if (!playingRef.current) return;
+      if (ci >= chunks.length) { setPlaying(false); finishSession(); return; }
+      const ch = chunks[ci];
+      const u = new SpeechSynthesisUtterance(ch.words.join(" "));
+      if (voiceObj) u.voice = voiceObj;
+      u.rate = audioRate; u.lang = voiceObj ? voiceObj.lang : "es-ES";
+      u.onboundary = (e) => {
+        if (e.charIndex == null) return;
+        const upto = ch.words.join(" ").slice(0, e.charIndex);
+        const wcount = upto.split(/\s+/).filter(Boolean).length;
+        setIndex(Math.min(ch.start + wcount, words.length - 1));
+      };
+      u.onend = () => { ci++; next(); };
+      synth.speak(u);
+    };
+    next();
+  }, [words, audioRate, audioVoice, voices, finishSession]);
+
+  const stopSpeak = useCallback(() => { try { window.speechSynthesis.cancel(); } catch {} }, []);
+
   const handlePlayPause = useCallback(() => {
-    if (indexRef.current >= words.length - 1) { setIndex(0); setPlaying(true); }
-    else setPlaying(p => !p);
-  }, [words.length]);
+    const atEnd = indexRef.current >= words.length - 1;
+    const start = atEnd ? 0 : indexRef.current;
+    const willPlay = atEnd ? true : !playingRef.current;
+    if (atEnd) setIndex(0);
+    playingRef.current = willPlay;
+    setPlaying(willPlay);
+    if (audioMode) { if (willPlay) speakFrom(start); else stopSpeak(); }
+  }, [words.length, audioMode, speakFrom, stopSpeak]);
   const handleBack    = useCallback(() => { setPlaying(false); setIndex(i => Math.max(0, i - 10)); }, []);
   const handleForward = useCallback(() => { setPlaying(false); setIndex(i => Math.min(words.length - 1, i + 10)); }, [words.length]);
   const handleRestart = useCallback(() => { setPlaying(false); setIndex(0); }, []);
   const adjustWpm = (d) => { setWpm(w => Math.max(50, Math.min(2000, w + d))); setMode(null); };
+
+  // si cambia la velocidad de audio mientras habla, reencolar desde la palabra actual
+  useEffect(() => {
+    if (audioMode && playingRef.current) { stopSpeak(); speakFrom(indexRef.current); }
+  }, [audioRate]); // eslint-disable-line
   const applyMode = (key) => { const m = MODES[key]; setMode(key); setWpm(m.wpm); setPauseScale(m.pauseScale); setPlaying(false); };
   const gotoChapter = (startWord) => { setPlaying(false); setIndex(startWord); };
   const currentChapterIdx = chapters.length ? chapters.reduce((acc, ch, i) => (index >= ch.startWord ? i : acc), 0) : -1;
+
   const prevChapter = () => { if (currentChapterIdx > 0) gotoChapter(chapters[currentChapterIdx - 1].startWord); };
   const nextChapter = () => { if (currentChapterIdx >= 0 && currentChapterIdx < chapters.length - 1) gotoChapter(chapters[currentChapterIdx + 1].startWord); };
 
@@ -1031,6 +1096,42 @@ function SpeedReader() {
           </div>
           {wpm > 500 && <div style={{ fontSize:10, color:"#6a5a3a", textAlign:"center", letterSpacing:"0.04em" }}>Por encima de ~450 wpm en texto denso la comprensión cae; útil para triaje.</div>}
         </div>
+
+        {/* Interruptor Audio / Visual */}
+        <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
+          <button className="ctrl-btn" onClick={() => { setPlaying(false); stopSpeak(); setAudioMode(false); }}
+            style={{ flex:1, maxWidth:160, background: !audioMode ? "#e8c84a1f" : "transparent", border:`1px solid ${!audioMode ? "#e8c84a" : "#26241f"}`, color: !audioMode ? "#e8c84a" : "#7a746a", borderRadius:11, padding:"10px", fontSize:13, fontWeight:600, cursor:"pointer", minHeight:44 }}>
+            Visual (RSVP)
+          </button>
+          <button className="ctrl-btn" onClick={() => { setPlaying(false); stopSpeak(); setAudioMode(true); }}
+            style={{ flex:1, maxWidth:160, background: audioMode ? "#7a9ee81f" : "transparent", border:`1px solid ${audioMode ? "#7a9ee8" : "#26241f"}`, color: audioMode ? "#7a9ee8" : "#7a746a", borderRadius:11, padding:"10px", fontSize:13, fontWeight:600, cursor:"pointer", minHeight:44 }}>
+            Audio (voz)
+          </button>
+        </div>
+
+        {/* Velocidad de audio x1–x2 (solo en modo audio) */}
+        {audioMode && (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+              <span style={{ fontSize:11, color:"#55514a", letterSpacing:"0.14em", textTransform:"uppercase" }}>velocidad</span>
+              <span className="mono" style={{ fontSize:22, color:"#7a9ee8", fontWeight:500 }}>x{audioRate.toFixed(1)}</span>
+            </div>
+            <div className="wpm-scroll">
+              {[1.0,1.1,1.2,1.3,1.4,1.5,1.6,1.7,1.8,1.9,2.0].map(r => (
+                <button key={r} className="ctrl-btn mono" onClick={() => setAudioRate(r)}
+                  style={{ background: Math.abs(audioRate-r)<0.001 ? "#7a9ee81f" : "transparent", border:`1px solid ${Math.abs(audioRate-r)<0.001 ? "#7a9ee8" : "#26241f"}`, color: Math.abs(audioRate-r)<0.001 ? "#7a9ee8" : "#7a746a", borderRadius:20, padding:"8px 14px", fontSize:13, cursor:"pointer", minHeight:38, whiteSpace:"nowrap" }}>x{r.toFixed(1)}</button>
+              ))}
+            </div>
+            {voices.length > 0 && (
+              <select value={audioVoice || ""} onChange={e => setAudioVoice(e.target.value)}
+                style={{ background:"#08080a", border:"1px solid #26241f", color:"#a8a298", borderRadius:10, padding:"10px 12px", fontSize:13, fontFamily:"inherit" }}>
+                {voices.filter(v => /^es/i.test(v.lang)).concat(voices.filter(v => !/^es/i.test(v.lang))).map(v => (
+                  <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
 
         <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:16 }}>
           <button className="ctrl-btn" onClick={handleRestart} title="Reiniciar (R)" style={{ background:"transparent", border:"1px solid #1e1c18", color:"#55514a", borderRadius:12, width:50, height:50, cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center" }}>⟨⟨</button>
