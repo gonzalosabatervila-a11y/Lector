@@ -69,7 +69,7 @@ const TRAINING_BLOCKS = [
 const AVG_WORD_LEN = 6; // chars; length beyond this adds processing time
 
 // ── Calibration: passage bank (original text) + speeds + analysis ─────────────
-const CALIB_SPEEDS = [250, 350, 450, 550, 600];
+const CALIB_SPEEDS = [250, 350, 450, 550, 650, 700];
 const CALIB_PASSAGES = [
   {
     text: "El cuerpo humano regula su temperatura mediante un equilibrio constante entre el calor que produce y el que disipa. Cuando hace calor, los vasos sanguíneos de la piel se dilatan y aumenta el sudor, cuya evaporación enfría la superficie corporal. Cuando hace frío, los vasos se contraen para conservar el calor en los órganos internos y los músculos pueden temblar para generar calor adicional. El centro que coordina todo esto se encuentra en el hipotálamo, una región del cerebro que actúa como un termostato biológico comparando la temperatura real con un valor de referencia cercano a los treinta y siete grados.",
@@ -109,6 +109,78 @@ const CALIB_PASSAGES = [
       { q: "¿Qué pigmento captura la luz?", opts: ["La glucosa", "La clorofila", "El oxígeno", "La savia"], correct: 1 },
       { q: "¿Qué subproducto se libera a la atmósfera?", opts: ["Dióxido de carbono", "Nitrógeno", "Oxígeno", "Hidrógeno"], correct: 2 },
       { q: "¿De dónde absorben el agua las plantas?", opts: ["De las hojas", "Del aire", "De las raíces", "De la luz"], correct: 2 },
+    ],
+  },
+  {
+    text: "Las mareas son el ascenso y descenso periódico del nivel del mar provocado principalmente por la atracción gravitatoria de la Luna y, en menor medida, del Sol. Cuando la Luna está alineada con un punto de la Tierra, el agua se acumula formando una pleamar, mientras que en las zonas perpendiculares se produce una bajamar. Como la Tierra gira sobre sí misma, la mayoría de las costas experimentan dos pleamares y dos bajamares cada día. Cuando el Sol y la Luna se alinean, sus fuerzas se suman y las mareas son más intensas; cuando forman ángulo recto, se contrarrestan y las mareas son más suaves.",
+    questions: [
+      { q: "¿Qué astro influye más en las mareas?", opts: ["El Sol", "La Luna", "Marte", "Venus"], correct: 1 },
+      { q: "¿Cuántas pleamares hay normalmente al día?", opts: ["Una", "Dos", "Tres", "Cuatro"], correct: 1 },
+      { q: "¿Cuándo son más intensas las mareas?", opts: ["Cuando Sol y Luna se alinean", "Cuando forman ángulo recto", "En invierno", "Al amanecer"], correct: 0 },
+    ],
+  },
+  {
+    text: "El sistema inmunitario distingue entre lo propio y lo ajeno para defender al organismo de agentes dañinos. Cuando un patógeno consigue entrar, unas células especializadas lo detectan y activan una respuesta que incluye la producción de anticuerpos, proteínas capaces de reconocer y neutralizar a ese invasor concreto. Tras superar la infección, el cuerpo conserva células de memoria que recuerdan al agresor, de modo que si vuelve a aparecer la respuesta es mucho más rápida. En ese principio se basan las vacunas, que entrenan al sistema mostrándole una versión inofensiva del patógeno.",
+    questions: [
+      { q: "¿Qué proteínas neutralizan a los invasores?", opts: ["Las enzimas", "Los anticuerpos", "Las hormonas", "Los lípidos"], correct: 1 },
+      { q: "¿Qué permite una respuesta más rápida la segunda vez?", opts: ["Las células de memoria", "Los glóbulos rojos", "El hígado", "La piel"], correct: 0 },
+      { q: "¿En qué principio se basan las vacunas?", opts: ["En destruir el sistema", "En entrenar al sistema con una versión inofensiva", "En eliminar anticuerpos", "En subir la temperatura"], correct: 1 },
+    ],
+  },
+  {
+    text: "La inflación es el aumento generalizado y sostenido de los precios de bienes y servicios a lo largo del tiempo. Cuando hay inflación, cada unidad de moneda compra menos que antes, de modo que el poder adquisitivo disminuye. Una causa frecuente es que la demanda crezca más deprisa que la capacidad de producción, pero también puede originarse cuando suben los costes de producción o cuando aumenta mucho la cantidad de dinero en circulación. Una inflación moderada y previsible se considera normal en una economía sana, pero cuando se descontrola erosiona el ahorro y dificulta la planificación.",
+    questions: [
+      { q: "¿Qué le ocurre al poder adquisitivo con inflación?", opts: ["Aumenta", "Disminuye", "No cambia", "Se duplica"], correct: 1 },
+      { q: "¿Cuál es una causa frecuente de inflación?", opts: ["Que la demanda crezca más que la producción", "Que bajen los salarios", "Que llueva más", "Que cierren los bancos"], correct: 0 },
+      { q: "¿Cómo se considera una inflación moderada y previsible?", opts: ["Catastrófica", "Normal en una economía sana", "Imposible", "Ilegal"], correct: 1 },
+    ],
+  },
+  {
+    text: "Los terremotos se producen cuando la energía acumulada en el interior de la Tierra se libera de golpe y hace vibrar el terreno. La mayoría ocurre en los bordes de las placas tectónicas, donde estas rozan, chocan o se separan. El punto del interior donde se origina la ruptura se llama hipocentro, y el lugar de la superficie situado justo encima es el epicentro. La energía se propaga en forma de ondas sísmicas que pierden intensidad con la distancia, razón por la cual el daño suele ser mayor cerca del epicentro. Su magnitud se mide con escalas que cuantifican la energía liberada.",
+    questions: [
+      { q: "¿Dónde ocurren la mayoría de los terremotos?", opts: ["En el centro de las placas", "En los bordes de las placas", "En los desiertos", "En los polos"], correct: 1 },
+      { q: "¿Cómo se llama el punto en superficie sobre el origen?", opts: ["Hipocentro", "Epicentro", "Núcleo", "Falla"], correct: 1 },
+      { q: "¿Dónde suele ser mayor el daño?", opts: ["Lejos del epicentro", "Cerca del epicentro", "En el mar", "Da igual la distancia"], correct: 1 },
+    ],
+  },
+  {
+    text: "El sueño no es un estado uniforme, sino que se organiza en ciclos que se repiten varias veces durante la noche. Cada ciclo alterna fases de sueño profundo, importantes para la recuperación física, con fases de sueño REM, asociadas a los sueños vívidos y a la consolidación de la memoria. Durante el sueño profundo el cuerpo repara tejidos y libera hormonas de crecimiento, mientras que en la fase REM el cerebro reorganiza y fija lo aprendido durante el día. Interrumpir el sueño de forma repetida impide completar estos ciclos y deteriora tanto la memoria como el estado de ánimo.",
+    questions: [
+      { q: "¿Cómo se organiza el sueño?", opts: ["En un estado uniforme", "En ciclos que se repiten", "En una sola fase", "Al azar"], correct: 1 },
+      { q: "¿Qué fase se asocia a la consolidación de la memoria?", opts: ["El sueño profundo", "La fase REM", "El insomnio", "La siesta"], correct: 1 },
+      { q: "¿Qué ocurre al interrumpir el sueño repetidamente?", opts: ["Mejora la memoria", "Se deteriora memoria y ánimo", "No pasa nada", "Aumenta la energía"], correct: 1 },
+    ],
+  },
+  {
+    text: "La fotografía digital captura la luz mediante un sensor formado por millones de elementos sensibles llamados píxeles. Cuando se abre el obturador, cada uno mide la cantidad de luz que recibe y la convierte en una señal eléctrica que después se traduce en valores numéricos. La cantidad de luz que llega depende de tres factores que el fotógrafo puede controlar: la apertura del diafragma, el tiempo de exposición y la sensibilidad del sensor. Ajustar estos tres parámetros en equilibrio permite obtener una imagen bien expuesta, ni demasiado oscura ni quemada por exceso de luz.",
+    questions: [
+      { q: "¿Cómo se llaman los elementos sensibles del sensor?", opts: ["Bits", "Píxeles", "Diodos", "Filtros"], correct: 1 },
+      { q: "¿Cuántos factores controla el fotógrafo según el texto?", opts: ["Dos", "Tres", "Cuatro", "Cinco"], correct: 1 },
+      { q: "¿Qué se busca al equilibrar los parámetros?", opts: ["Una imagen bien expuesta", "Más píxeles", "Menos color", "Mayor tamaño"], correct: 0 },
+    ],
+  },
+  {
+    text: "El comercio de especias movió la economía mundial durante siglos y motivó muchos de los grandes viajes de exploración. Productos como la pimienta, la canela o el clavo procedían de regiones lejanas de Asia y llegaban a Europa tras largas rutas controladas por intermediarios, lo que multiplicaba su precio. El deseo de acceder directamente a esas fuentes, evitando a los intermediarios, impulsó a varias potencias a buscar nuevas rutas marítimas. Esa búsqueda no solo transformó el comercio, sino que aceleró encuentros entre culturas y redibujó los mapas del mundo conocido.",
+    questions: [
+      { q: "¿Qué motivó muchos viajes de exploración?", opts: ["El comercio de especias", "El turismo", "La pesca", "La minería"], correct: 0 },
+      { q: "¿Por qué eran tan caras las especias en Europa?", opts: ["Por su peso", "Por las largas rutas e intermediarios", "Por impuestos locales", "Porque escaseaban en Asia"], correct: 1 },
+      { q: "¿Qué buscaban las potencias?", opts: ["Nuevas rutas marítimas directas", "Más intermediarios", "Reducir la flota", "Abandonar el comercio"], correct: 0 },
+    ],
+  },
+  {
+    text: "El efecto invernadero es un fenómeno natural que permite que la Tierra mantenga una temperatura habitable. Algunos gases de la atmósfera, como el dióxido de carbono y el vapor de agua, dejan pasar la luz solar pero retienen parte del calor que la superficie devuelve hacia el espacio. Sin este efecto, el planeta sería demasiado frío para la vida tal como la conocemos. El problema surge cuando la actividad humana aumenta la concentración de estos gases, porque entonces se retiene más calor del necesario y la temperatura media global tiende a subir, alterando el clima.",
+    questions: [
+      { q: "¿Qué permite el efecto invernadero de forma natural?", opts: ["Enfriar el planeta", "Mantener una temperatura habitable", "Eliminar el oxígeno", "Crear viento"], correct: 1 },
+      { q: "¿Qué hacen los gases como el CO2?", opts: ["Bloquean la luz solar", "Dejan pasar la luz y retienen calor", "Enfrían la superficie", "Producen lluvia"], correct: 1 },
+      { q: "¿Cuándo surge el problema?", opts: ["Cuando baja el CO2", "Cuando la actividad humana aumenta esos gases", "En invierno", "De noche"], correct: 1 },
+    ],
+  },
+  {
+    text: "El cerebro consume una cantidad de energía desproporcionada respecto a su tamaño: aunque representa apenas el dos por ciento del peso corporal, gasta alrededor de la quinta parte de la energía total que utiliza el organismo en reposo. Esa energía se destina sobre todo a mantener la actividad eléctrica de las neuronas y a transportar sustancias a través de sus membranas. A diferencia de otros órganos, el cerebro casi no almacena reservas, por lo que depende de un suministro constante de glucosa y oxígeno a través de la sangre. Una interrupción de pocos minutos en ese suministro basta para dañarlo gravemente.",
+    questions: [
+      { q: "¿Qué porción de la energía en reposo usa el cerebro?", opts: ["Un dos por ciento", "Alrededor de una quinta parte", "La mitad", "Casi nada"], correct: 1 },
+      { q: "¿De qué depende el cerebro al no almacenar reservas?", opts: ["De un suministro constante de glucosa y oxígeno", "De la grasa acumulada", "Del sueño", "De la temperatura"], correct: 0 },
+      { q: "¿Qué ocurre si se interrumpe el suministro unos minutos?", opts: ["No pasa nada", "Se daña gravemente", "Mejora su rendimiento", "Se duerme"], correct: 1 },
     ],
   },
 ];
@@ -1344,8 +1416,15 @@ function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, re
   const [wordIdx, setWordIdx] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [countdown, setCountdown] = useState(3);
+  // selección aleatoria de pasajes (uno por velocidad), fijada al montar — no se repiten dentro de la sesión
+  const [picked] = useState(() => {
+    const pool = [...CALIB_PASSAGES.keys()];
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    return pool.slice(0, CALIB_SPEEDS.length);
+  });
+  const total = CALIB_SPEEDS.length;
 
-  const passage = CALIB_PASSAGES[pIdx];
+  const passage = CALIB_PASSAGES[picked[pIdx]];
   const speed = CALIB_SPEEDS[pIdx];
   const words = passage ? parseText(passage.text) : [];
   const timeoutRef = useRef(null);
@@ -1384,7 +1463,7 @@ function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, re
     const comp = correct / passage.questions.length;
     const newResults = [...results, { wpm: speed, comp }];
     setResults(newResults);
-    if (pIdx + 1 >= CALIB_PASSAGES.length) {
+    if (pIdx + 1 >= total) {
       setStage("done");
       onSave(newResults);
     } else { setPIdx(pIdx + 1); setStage("intro2"); }
@@ -1405,11 +1484,11 @@ function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, re
             <div style={{ fontFamily:"'Fraunces',serif", fontSize:25, color:"var(--accent)" }}>Calibración</div>
             {stage === "intro" ? (
               <div style={{ fontSize:14, color:"var(--text3)", lineHeight:1.55 }}>
-                Cinco pasajes breves a velocidad creciente (250 → 600). Tras cada uno, tres preguntas. No podrás volver atrás: lee como si fuera real. Al final verás tu curva velocidad/comprensión y tu velocidad óptima honesta. Dura unos 6 minutos.
+                Seis pasajes breves a velocidad creciente (250 → 700), elegidos al azar de un banco amplio para que no se repitan. Tras cada uno, tres preguntas. No podrás volver atrás: lee como si fuera real. Las velocidades altas (650-700) miden tu lectura de triaje, no tu lectura cuidadosa. Al final verás tu curva velocidad/comprensión y tu velocidad óptima honesta. Dura unos 7 minutos.
               </div>
             ) : (
               <div style={{ fontSize:14, color:"var(--text3)", lineHeight:1.55 }}>
-                Pasaje {pIdx + 1} de {CALIB_PASSAGES.length}. Siguiente velocidad: <span className="mono" style={{ color:"var(--accent)" }}>{speed} wpm</span>.
+                Pasaje {pIdx + 1} de {total}. Siguiente velocidad: <span className="mono" style={{ color:"var(--accent)" }}>{speed} wpm</span>.
               </div>
             )}
             <div style={{ display:"flex", gap:10 }}>
@@ -1422,7 +1501,7 @@ function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, re
         {stage === "countdown" && (
           <div style={{ textAlign:"center", padding:"40px 0" }}>
             <div className="mono" style={{ fontSize:64, color:"var(--accent)", fontWeight:500 }}>{countdown > 0 ? countdown : "¡Ya!"}</div>
-            <div style={{ fontSize:13, color:"var(--text5)", marginTop:10 }}>{speed} wpm · pasaje {pIdx + 1}/{CALIB_PASSAGES.length}</div>
+            <div style={{ fontSize:13, color:"var(--text5)", marginTop:10 }}>{speed} wpm · pasaje {pIdx + 1}/{total}</div>
           </div>
         )}
 
@@ -1453,7 +1532,7 @@ function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, re
             ))}
             <button disabled={!allAnswered} onClick={submitQuiz}
               style={{ background: allAnswered ? "var(--accent)" : "var(--bordc)", color: allAnswered ? "var(--bg)" : "var(--text6)", border:"none", borderRadius:12, padding:"14px", fontSize:15, fontWeight:600, cursor: allAnswered ? "pointer" : "default" }}>
-              {pIdx + 1 >= CALIB_PASSAGES.length ? "Ver resultado" : "Siguiente pasaje"}
+              {pIdx + 1 >= total ? "Ver resultado" : "Siguiente pasaje"}
             </button>
           </>
         )}
