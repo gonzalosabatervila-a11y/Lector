@@ -6,10 +6,10 @@
 <meta name="theme-color" content="var(--bg)" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="Lector" />
+<meta name="apple-mobile-web-app-title" content="Cadence" />
 <link rel="manifest" href="./manifest.json" />
 <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-<title>Lector</title>
+<title>Cadence</title>
 <style>
   html, body, #root { height: 100%; margin: 0; background: var(--bg); }
   #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--accent); font-family: Georgia, serif; font-size: 22px; z-index: 9999; }
@@ -235,15 +235,15 @@ function WordDisplay({ word, fontSize, pivotColor }) {
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: `${leftFr}fr auto ${rightFr}fr`,
+      gridTemplateColumns: `minmax(0, ${leftFr}fr) auto minmax(0, ${rightFr}fr)`,
       alignItems: "baseline", width: "100%",
       fontFamily: "'Fraunces', 'DM Serif Display', Georgia, serif",
       fontSize: `${fontSize}px`, letterSpacing: "-0.01em",
-      userSelect: "none", lineHeight: 1,
+      userSelect: "none", lineHeight: 1.05, whiteSpace: "nowrap",
     }}>
-      <span style={{ color: "var(--text2)", textAlign: "right", whiteSpace: "nowrap", overflow: "visible" }}>{before}</span>
-      <span style={{ color: pivotColor, fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>{pivot}</span>
-      <span style={{ color: "var(--text2)", textAlign: "left", whiteSpace: "nowrap", overflow: "visible" }}>{after}</span>
+      <span style={{ color: "var(--text2)", textAlign: "right", overflow: "hidden" }}>{before}</span>
+      <span style={{ color: pivotColor, fontWeight: 600, textAlign: "center", padding: "0 0.04em" }}>{pivot}</span>
+      <span style={{ color: "var(--text2)", textAlign: "left", overflow: "hidden" }}>{after}</span>
     </div>
   );
 }
@@ -722,7 +722,7 @@ function SpeedReader() {
       `- **Tiempo:** ${fmt(rec.ms)}\n` +
       (rec.retention ? `- **Retención (subjetiva):** ${rec.retention}/5\n` : "") +
       (rec.note ? `\n## Resumen\n\n> ${rec.note}\n` : "") +
-      `\n---\n*Exportado desde Lector*\n`;
+      `\n---\n*Exportado desde Cadence*\n`;
     const blob = new Blob([md], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -741,28 +741,49 @@ function SpeedReader() {
         if (key && key.startsWith("sr:")) data[key] = localStorage.getItem(key);
       }
     } catch {}
-    const payload = { app: "Lector", version: 1, exportedAt: new Date().toISOString(), data };
+    const payload = { app: "Cadence", version: 1, exportedAt: new Date().toISOString(), data };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `lector_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.href = url; a.download = `cadence_backup_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const importBackup = (file) => {
+    // límite de tamaño (10 MB) para no intentar parsear archivos enormes
+    if (file.size > 10 * 1024 * 1024) { alert("El archivo es demasiado grande para ser un backup de Lector."); return; }
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const payload = JSON.parse(reader.result);
-        if (!payload || !payload.data) throw new Error("Formato no reconocido");
-        Object.entries(payload.data).forEach(([k, v]) => { try { localStorage.setItem(k, v); } catch {} });
-        alert("Datos restaurados. La app se recargará para aplicarlos.");
+        // 1) debe declararse como backup de Lector
+        if (!payload || (payload.app !== "Cadence" && payload.app !== "Lector")) throw new Error("No es un backup de Cadence.");
+        // 2) versión soportada
+        if (payload.version !== 1) throw new Error("Versión de backup no compatible.");
+        // 3) datos presentes y con forma de objeto
+        if (!payload.data || typeof payload.data !== "object") throw new Error("El backup no contiene datos válidos.");
+        // 4) aceptar solo claves conocidas (prefijos permitidos), descartar el resto
+        const allowedExact = new Set(["sr:prefs", "sr:metrics", "sr:summaries", "sr:sessions", "sr:calibration", "sr:calibrations", "sr:checks", "sr:docs"]);
+        const allowedPrefix = ["sr:pos:", "sr:doctext:"];
+        const entries = Object.entries(payload.data).filter(([k, v]) =>
+          typeof k === "string" && typeof v === "string" &&
+          (allowedExact.has(k) || allowedPrefix.some(p => k.startsWith(p)))
+        );
+        if (entries.length === 0) throw new Error("El backup no contiene datos reconocibles de Lector.");
+        // 5) cada valor debe ser JSON parseable (descarta entradas corruptas en silencio)
+        let restored = 0;
+        entries.forEach(([k, v]) => {
+          try { JSON.parse(v); localStorage.setItem(k, v); restored++; } catch {}
+        });
+        if (restored === 0) throw new Error("No se pudo restaurar ninguna entrada válida.");
+        alert(`Datos restaurados (${restored} elementos). La app se recargará para aplicarlos.`);
         window.location.reload();
       } catch (e) {
         alert("No se pudo restaurar: " + e.message);
       }
     };
+    reader.onerror = () => alert("No se pudo leer el archivo.");
     reader.readAsText(file);
   };
 
@@ -1112,7 +1133,7 @@ function SpeedReader() {
       {/* ── Header ── */}
       <div className={mounted ? anim("reveal") : ""} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"max(14px, env(safe-area-inset-top)) 18px 12px", borderBottom:"1px solid var(--bord)", gap:8, position:"relative", zIndex:2 }}>
         <span style={{ fontFamily:"'Fraunces',serif", fontSize:19, color:"var(--accent)", flexShrink:0, fontWeight:600 }}>
-          Lector<span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:11, color:"var(--text6)", letterSpacing:"0.1em", marginLeft:7, fontWeight:500 }}>GSV</span>
+          Cadence<span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:10, color:"var(--text6)", letterSpacing:"0.18em", marginLeft:8, fontWeight:400, textTransform:"uppercase" }}>lee a tu ritmo</span>
         </span>
         <div className="mono" style={{ fontSize:11, color:"var(--text6)", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", textAlign:"center" }}>{loading ? "procesando…" : `${words.length.toLocaleString()} palabras`}</div>
         <div style={{ display:"flex", gap:6, flexShrink:0 }}>
@@ -1303,13 +1324,13 @@ function SpeedReader() {
             {showVoiceMenu && voices.length > 0 && (
               <>
                 <div onClick={() => setShowVoiceMenu(false)} style={{ position:"fixed", inset:0, zIndex:40 }} />
-                <div className={anim("reveal")} style={{ position:"absolute", bottom:"calc(100% + 8px)", right:0, zIndex:41, background:"var(--surface)", border:"1px solid var(--bord2)", borderRadius:14, padding:"8px", display:"flex", flexDirection:"column", gap:4, minWidth:220, maxHeight:260, overflowY:"auto", boxShadow:"0 8px 30px #00000055" }}>
-                  <div style={{ fontSize:10, color:"var(--text6)", letterSpacing:"0.1em", textTransform:"uppercase", padding:"4px 8px" }}>Voz</div>
+                <div className={anim("reveal")} style={{ position:"absolute", bottom:"calc(100% + 8px)", right:0, zIndex:41, background:"var(--surface)", border:"1px solid var(--bord2)", borderRadius:14, padding:"8px", display:"flex", flexDirection:"column", gap:5, minWidth:240, maxHeight:300, overflowY:"auto", boxShadow:"0 8px 30px #00000055" }}>
+                  <div style={{ fontSize:10, color:"var(--text6)", letterSpacing:"0.1em", textTransform:"uppercase", padding:"4px 8px", flexShrink:0 }}>Voz</div>
                   {voices.filter(v => /^es/i.test(v.lang)).concat(voices.filter(v => !/^es/i.test(v.lang))).map(v => {
                     const sel = v.voiceURI === audioVoice;
                     return (
                       <button key={v.voiceURI} className="ctrl-btn" onClick={() => { setAudioVoice(v.voiceURI); setShowVoiceMenu(false); }}
-                        style={{ textAlign:"left", background: sel ? "#7a9ee81f" : "transparent", border:`1px solid ${sel ? "#7a9ee8" : "var(--bord)"}`, color: sel ? "#7a9ee8" : "var(--text3)", borderRadius:9, padding:"9px 11px", fontSize:13, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                        style={{ flexShrink:0, textAlign:"left", background: sel ? "#7a9ee81f" : "transparent", border:`1px solid ${sel ? "#7a9ee8" : "var(--bord)"}`, color: sel ? "#7a9ee8" : "var(--text3)", borderRadius:9, padding:"11px 12px", fontSize:13, lineHeight:1.2, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", minHeight:40 }}>
                         {v.name} <span style={{ color:"var(--text6)", fontSize:11 }}>({v.lang})</span>
                       </button>
                     );
@@ -1509,7 +1530,7 @@ function CalibrationOverlay({ pivotColor, fontSize, onClose, onApply, onSave, re
           <div style={{ position:"relative", padding:"40px 0", minHeight:160, display:"flex", alignItems:"center" }}>
             <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, top:"calc(50% - 40px)", transform:"translateX(-50%)", width:1, height:14, background:`${pc}66` }} />
             <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, bottom:"calc(50% - 40px)", transform:"translateX(-50%)", width:1, height:14, background:`${pc}66` }} />
-            <div style={{ width:"100%" }}><WordDisplay word={words[wordIdx]} fontSize={Math.min(fontSize, 52)} pivotColor={pc} /></div>
+            <div style={{ width:"100%" }}><WordDisplay word={words[wordIdx]} fontSize={Math.min(fontSize, 40)} pivotColor={pc} /></div>
           </div>
         )}
 

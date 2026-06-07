@@ -1,4 +1,4 @@
-# Lector — instalar como app en tu iPhone (GitHub Pages)
+# Cadence — instalar como app en tu iPhone (GitHub Pages)
 
 Este paquete es una **PWA** completa: una app web que el iPhone trata como nativa
 (icono propio, pantalla completa, funciona sin conexión, guarda tu progreso).
@@ -45,7 +45,7 @@ segundos porque descarga React y las fuentes; luego queda en caché).
 1. Abre esa misma URL **en Safari** (tiene que ser Safari, no Chrome).
 2. Pulsa el botón **Compartir** (el cuadrado con la flecha hacia arriba).
 3. Baja y pulsa **Añadir a pantalla de inicio**.
-4. Confirma. Ya tienes el icono de **Lector** en tu pantalla.
+4. Confirma. Ya tienes el icono de **Cadence** en tu pantalla.
 
 Al abrirlo desde el icono se ve a pantalla completa, sin barra de Safari, como una
 app normal. Funciona sin conexión una vez cargada la primera vez.

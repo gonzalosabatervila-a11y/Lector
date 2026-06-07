@@ -1,5 +1,5 @@
 // Lector PWA — service worker (offline cache)
-const CACHE = "lector-v9";
+const CACHE = "cadence-v12";
 const ASSETS = [
   "./",
   "./index.html",

@@ -1,7 +1,7 @@
 {
-  "name": "Lector — lectura de entrenamiento",
-  "short_name": "Lector",
-  "description": "Lector RSVP de entrenamiento cognitivo: encuentra tu techo real entre velocidad y comprensión.",
+  "name": "Cadence — lee a tu ritmo",
+  "short_name": "Cadence",
+  "description": "Entrena tu lectura: encuentra tu velocidad óptima real según comprensión, no la máxima.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
