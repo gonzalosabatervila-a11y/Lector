@@ -1136,7 +1136,7 @@ function SpeedReader() {
         <span style={{ fontFamily:"'Fraunces',serif", fontSize:19, color:"var(--accent)", flexShrink:0, fontWeight:600 }}>
           Cadence<span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:9, color:"var(--text6)", letterSpacing:"0.16em", marginLeft:7, fontWeight:400, textTransform:"uppercase" }}>tu ritmo</span>
         </span>
-        <div className="mono" style={{ fontSize:11, color:"var(--text6)", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", textAlign:"center" }}>{loading ? "procesando…" : `${words.length.toLocaleString()} palabras`}</div>
+        <div style={{ flex:1 }} />
         <div style={{ display:"flex", gap:6, flexShrink:0 }}>
           <button className="ctrl-btn" onClick={() => setPanel(p => p==="history"?null:"history")} style={{ background:"transparent", border:`1px solid ${panel==="history"?"var(--accent)":"var(--bordc)"}`, color:panel==="history"?"var(--accent)":"var(--text4)", borderRadius:9, width:40, height:40, fontSize:14, cursor:"pointer", flexShrink:0 }}>↗</button>
           <button className="ctrl-btn" onClick={() => setPanel(p => p==="stats"?null:"stats")} style={{ background:panel==="stats"?"var(--accent-1f)":"transparent", border:`1px solid ${panel==="stats"?"var(--accent)":"var(--bordc)"}`, color:panel==="stats"?"var(--accent)":"var(--text4)", borderRadius:9, width:40, height:40, fontSize:14, cursor:"pointer", flexShrink:0 }}>◷</button>
