@@ -41,6 +41,17 @@ const PIVOT_COLORS = {
 };
 // helper: hex + alpha suffix
 const withAlpha = (hex, a) => hex + a;
+// trocea palabras en frases (~180 chars) para TTS y para resaltado en modo audio
+function chunkText(words, startIdx = 0) {
+  const slice = words.slice(startIdx);
+  const chunks = []; let cur = [], curStart = startIdx, len = 0;
+  slice.forEach((w, k) => {
+    cur.push(w); len += w.length + 1;
+    if (len > 180 || /[.!?]$/.test(w)) { chunks.push({ words: cur, start: curStart, text: cur.join(" ") }); curStart = startIdx + k + 1; cur = []; len = 0; }
+  });
+  if (cur.length) chunks.push({ words: cur, start: curStart, text: cur.join(" ") });
+  return chunks;
+}
 
 const MODES = {
   comprension: { label: "Comprensión", wpm: 300, pauseScale: 1.0, color: "#5fb86a" },
@@ -167,6 +178,33 @@ function WordDisplay({ word, fontSize, pivotColor }) {
 
 function parseText(text) {
   return text.replace(/\n+/g, " ").split(/\s+/).map(w => w.trim()).filter(w => w.length > 0);
+}
+
+// Lector de audio: texto continuo con la frase activa resaltada y autoscroll (estilo escucha)
+function AudioReader({ chunks, activeChunk, loading, accent, onSeek, reduce, hasText }) {
+  const activeRef = useRef(null);
+  useEffect(() => {
+    if (activeRef.current) {
+      try { activeRef.current.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" }); } catch {}
+    }
+  }, [activeChunk, reduce]);
+  if (loading) return <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}><span style={{ color:"var(--text7)", fontFamily:"'Fraunces',serif", fontSize:22 }}>Procesando…</span></div>;
+  if (!hasText) return <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}><span style={{ color:"var(--text7)", fontFamily:"'Fraunces',serif", fontSize:22 }}>Carga un texto para escuchar</span></div>;
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding:"24px 22px 32px", zIndex:2, WebkitOverflowScrolling:"touch" }}>
+      <div style={{ maxWidth:680, margin:"0 auto", fontFamily:"'Fraunces',serif", fontSize:21, lineHeight:1.7, color:"var(--text3)" }}>
+        {chunks.map((ch, i) => {
+          const active = i === activeChunk;
+          return (
+            <span key={i} ref={active ? activeRef : null} onClick={() => onSeek(ch.start)}
+              style={{ cursor:"pointer", background: active ? accent + "33" : "transparent", color: active ? "var(--text)" : "var(--text3)", borderRadius:5, padding:"1px 2px", transition: reduce ? "none" : "background 0.25s, color 0.25s", boxDecorationBreak:"clone", WebkitBoxDecorationBreak:"clone" }}>
+              {ch.text}{" "}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 function stripHtml(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -351,6 +389,7 @@ function SpeedReader() {
   const [audioRate, setAudioRate] = useState(1.0);
   const [audioVoice, setAudioVoice] = useState(null);
   const [voices, setVoices] = useState([]);
+  const [activeChunk, setActiveChunk] = useState(-1);
 
   const [metrics, setMetrics]   = useState({ totalWordsRead: 0, totalMs: 0, sessions: 0, lastDay: null, streak: 0, todayWords: 0, todayDay: null, lastActivity: 0 });
   const metricsRef = useRef(metrics);
@@ -647,30 +686,31 @@ function SpeedReader() {
     return () => { try { synth.onvoiceschanged = null; } catch {} };
   }, []);
 
+  // chunks del documento completo (para render del modo audio y resaltado)
+  const audioChunks = audioMode ? chunkText(words, 0) : [];
+
   const speakFrom = useCallback((startIdx) => {
     const synth = window.speechSynthesis; if (!synth) return;
     synth.cancel();
-    const slice = words.slice(startIdx);
-    if (!slice.length) return;
-    const chunks = []; let cur = [], curStart = startIdx, len = 0;
-    slice.forEach((w, k) => {
-      cur.push(w); len += w.length + 1;
-      if (len > 180 || /[.!?]$/.test(w)) { chunks.push({ words: cur, start: curStart }); curStart = startIdx + k + 1; cur = []; len = 0; }
-    });
-    if (cur.length) chunks.push({ words: cur, start: curStart });
+    if (!words.length) return;
+    const all = chunkText(words, 0);
+    // empezar por el chunk que contiene startIdx
+    let startCi = all.findIndex((c, i) => startIdx >= c.start && (i === all.length - 1 || startIdx < all[i + 1].start));
+    if (startCi < 0) startCi = 0;
     const voiceObj = voices.find(v => v.voiceURI === audioVoice);
-    let ci = 0;
+    let ci = startCi;
     const next = () => {
       if (!playingRef.current) return;
-      if (ci >= chunks.length) { setPlaying(false); finishSession(); return; }
-      const ch = chunks[ci];
-      const u = new SpeechSynthesisUtterance(ch.words.join(" "));
+      if (ci >= all.length) { setPlaying(false); setActiveChunk(-1); finishSession(); return; }
+      const ch = all[ci];
+      setActiveChunk(ci);
+      setIndex(ch.start);
+      const u = new SpeechSynthesisUtterance(ch.text);
       if (voiceObj) u.voice = voiceObj;
       u.rate = audioRate; u.lang = voiceObj ? voiceObj.lang : "es-ES";
       u.onboundary = (e) => {
         if (e.charIndex == null) return;
-        const upto = ch.words.join(" ").slice(0, e.charIndex);
-        const wcount = upto.split(/\s+/).filter(Boolean).length;
+        const wcount = ch.text.slice(0, e.charIndex).split(/\s+/).filter(Boolean).length;
         setIndex(Math.min(ch.start + wcount, words.length - 1));
       };
       u.onend = () => { ci++; next(); };
@@ -1022,6 +1062,11 @@ function SpeedReader() {
       )}
 
       {/* ── Reader area (tap = play/pause) ── */}
+      {audioMode ? (
+        <AudioReader chunks={audioChunks} activeChunk={activeChunk} loading={loading} accent={pc}
+          onSeek={(start) => { setIndex(start); if (playingRef.current) { stopSpeak(); speakFrom(start); } }}
+          reduce={reduce} hasText={words.length > 0} />
+      ) : (
       <div onClick={handlePlayPause} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 0", position:"relative", minHeight:0, cursor:"pointer", zIndex:2 }}>
         {/* reticle exactly on pivot x */}
         <div style={{ position:"absolute", left:`${PIVOT_X*100}%`, top:"calc(50% - 62px)", transform:"translateX(-50%)", width:1, height:18, background:`${pc}66`, pointerEvents:"none" }} />
@@ -1044,6 +1089,7 @@ function SpeedReader() {
           {!playing && !training && <span style={{ color:"var(--faint)" }}>tap = play</span>}
         </div>
       </div>
+      )}
 
       {/* ── Scrubbable progress ── */}
       <div ref={trackRef} onPointerDown={handleScrubStart} onPointerMove={handleScrubMove} onPointerUp={handleScrubEnd} onPointerCancel={handleScrubEnd}
@@ -1112,11 +1158,11 @@ function SpeedReader() {
 
         {/* Interruptor Audio / Visual */}
         <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
-          <button className="ctrl-btn" onClick={() => { setPlaying(false); stopSpeak(); setAudioMode(false); }}
+          <button className="ctrl-btn" onClick={() => { setPlaying(false); stopSpeak(); setActiveChunk(-1); setAudioMode(false); }}
             style={{ flex:1, maxWidth:160, background: !audioMode ? "var(--accent-1f)" : "transparent", border:`1px solid ${!audioMode ? "var(--accent)" : "var(--bordc)"}`, color: !audioMode ? "var(--accent)" : "var(--text5)", borderRadius:11, padding:"10px", fontSize:13, fontWeight:600, cursor:"pointer", minHeight:44 }}>
             Visual (RSVP)
           </button>
-          <button className="ctrl-btn" onClick={() => { setPlaying(false); stopSpeak(); setAudioMode(true); }}
+          <button className="ctrl-btn" onClick={() => { setPlaying(false); stopSpeak(); setActiveChunk(-1); setAudioMode(true); }}
             style={{ flex:1, maxWidth:160, background: audioMode ? "#7a9ee81f" : "transparent", border:`1px solid ${audioMode ? "#7a9ee8" : "var(--bordc)"}`, color: audioMode ? "#7a9ee8" : "var(--text5)", borderRadius:11, padding:"10px", fontSize:13, fontWeight:600, cursor:"pointer", minHeight:44 }}>
             Audio (voz)
           </button>
